@@ -63,6 +63,8 @@ final case class Watson(apiUrl: String, apiKey: String)
     extends TaggingHandler
     with LazyLogging {
 
+  // todo sanity check to avoid calling api if url is invalid (check for 404)
+
   override def analyze(requestString: String): Option[TaggingResult] =
     Try {
       Http(apiUrl)
@@ -78,7 +80,15 @@ final case class Watson(apiUrl: String, apiKey: String)
         logger.error(s"Exception occurred during Watson call: $exception")
         None
       case Success(value) =>
-        decode[WatsonResponse](value).map(WatsonTaggingResult).toOption
+        decode[WatsonResponse](value).map(WatsonTaggingResult) match {
+          case Left(error) =>
+            logger.error(
+              s"Exception occurred during Watson call. Msg: '${error.getMessage}''"
+            )
+            None
+          case Right(decodingResult) =>
+            Some(decodingResult)
+        }
     }
 
   private def cleanString(inputString: String) =
