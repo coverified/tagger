@@ -9,18 +9,18 @@ import com.typesafe.scalalogging.LazyLogging
 import scopt.{OptionParser => scoptOptionParser}
 
 /**
- * //ToDo: Class Description
- *
- * @version 0.1
- * @since 26.02.21
- */
+  * //ToDo: Class Description
+  *
+  * @version 0.1
+  * @since 26.02.21
+  */
 object ArgsParser extends LazyLogging {
 
   final case class Args(
-                         apiUrl: Option[String] = None,
-                         taggerServiceApiUrl: Option[String] = None,
-                         taggerServiceAuthKey: Option[String] = None
-                       )
+      apiUrl: Option[String] = None,
+      taggerServiceApiUrl: Option[String] = None,
+      taggerServiceAuthKey: Option[String] = None
+  )
 
   private def buildParser: scoptOptionParser[Args] = {
     new scoptOptionParser[Args]("CoVerifiedTagger") {
@@ -45,7 +45,8 @@ object ArgsParser extends LazyLogging {
         })
         .validate(
           value =>
-            if (value.trim.isEmpty) failure("taggerServiceApiUrl cannot be empty!")
+            if (value.trim.isEmpty)
+              failure("taggerServiceApiUrl cannot be empty!")
             else success
         )
         .text("Tagger Service API Url")
@@ -59,7 +60,8 @@ object ArgsParser extends LazyLogging {
         })
         .validate(
           value =>
-            if (value.trim.isEmpty) failure("taggerServiceAuthKey cannot be empty!")
+            if (value.trim.isEmpty)
+              failure("taggerServiceAuthKey cannot be empty!")
             else success
         )
         .text("Tagger Service API Auth Key")

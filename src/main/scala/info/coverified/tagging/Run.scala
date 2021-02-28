@@ -16,24 +16,33 @@ import zio.console.Console
 import scala.util.{Success, Try}
 
 /**
- * //ToDo: Class Description
- *
- * @version 0.1
- * @since 26.02.21
- */
+  * //ToDo: Class Description
+  *
+  * @version 0.1
+  * @since 26.02.21
+  */
 object Run extends App with LazyLogging {
 
   override def run(
-                    args: List[String]
-                  ): URIO[zio.ZEnv with Console, ExitCode] = {
+      args: List[String]
+  ): URIO[zio.ZEnv with Console, ExitCode] = {
 
     // get args
     val tagger: Tagger =
       ArgsParser
         .parse(args.toArray)
         .flatMap {
-          case Args(Some(apiUrl), Some(taggerServiceApiUrl), Some(taggerServiceAuthKey)) =>
-            Some(Tagger(uri"$apiUrl", Watson(taggerServiceApiUrl, taggerServiceAuthKey)))
+          case Args(
+              Some(apiUrl),
+              Some(taggerServiceApiUrl),
+              Some(taggerServiceAuthKey)
+              ) =>
+            Some(
+              Tagger(
+                uri"$apiUrl",
+                Watson(taggerServiceApiUrl, taggerServiceAuthKey)
+              )
+            )
           case _ =>
             logger.info(
               "Trying to get configuration from environment variables ... "
@@ -41,9 +50,18 @@ object Run extends App with LazyLogging {
             None
         }
         .getOrElse(
-          Try((sys.env("TAGGER_API_URL"), sys.env("TAGGER_SERVICE_API_URL"), sys.env("TAGGER_SERVICE_AUTH_KEY"))) match {
+          Try(
+            (
+              sys.env("TAGGER_API_URL"),
+              sys.env("TAGGER_SERVICE_API_URL"),
+              sys.env("TAGGER_SERVICE_AUTH_KEY")
+            )
+          ) match {
             case Success((apiUrl, taggerServiceApiUrl, taggerServiceAuthKey)) =>
-              Tagger(uri"$apiUrl", Watson(taggerServiceApiUrl, taggerServiceAuthKey))
+              Tagger(
+                uri"$apiUrl",
+                Watson(taggerServiceApiUrl, taggerServiceAuthKey)
+              )
             case _ =>
               logger.info(
                 "Cannot get all required configuration parameters from environment variables. Exiting! "
