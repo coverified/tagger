@@ -15,7 +15,6 @@ Supervisor -> Tagger : ? TagEntries(skip:Int)
 Tagger -> API : QueryEntries
 note left
 1) all w/o tags
-2) entries with update date < 48h
 end note
 
 API -> Tagger : Entries
