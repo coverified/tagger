@@ -2,12 +2,9 @@ task buildDotEnv {
 	description "Build an environment information to later set up the docker container"
 
 	doFirst {
-		def content = """|NO_OF_CONCURRENT_WORKER=$noOfConcurrentWorker
-        |BATCH_SIZE=$batchSize
-        |GRAPHQL_API_URL=$graphQLApi
-        |AUTH_SECRET=$authSecret
-		|KI_API_URL=$kiApi
-		|INTERNAL_SCHEDULER_INTERVAL=$internalSchedulerInterval
+		def content = """|PROJECT_NAME=${project.name}
+                   |PROJECT_VERSION=${project.version.toString()}
+                   |MAIN_CLASS=${application.mainClass.get()}
         |""".stripMargin()
 		def file = new File("dockerBuild.env")
 		file.write(content)

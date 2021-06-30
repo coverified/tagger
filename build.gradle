@@ -26,6 +26,7 @@ ext {
 
 apply from: scriptsLocation + 'spotless.gradle'
 apply from: scriptsLocation + 'prepareEnv.gradle'
+apply from: scriptsLocation + 'deploy.gradle'
 
 group = 'info.coverified'
 version = '0.1-SNAPSHOT'
