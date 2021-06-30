@@ -38,7 +38,7 @@ repositories {
 dependencies {
 
 	// coverified dependencies
-	implementation 'com.github.coverified:graphQLConnector:4d29611'
+	implementation 'com.github.coverified:graphQLConnector:0b3824a'
 
 	// CORE akka //
 	implementation platform("com.typesafe.akka:akka-bom_${scalaVersion}:2.6.15")
