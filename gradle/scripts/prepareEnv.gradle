@@ -1,0 +1,17 @@
+task prepareEnvironment {
+	description "Preparing the environemnt for testing phase in GitLab's CI/CD pipeline"
+
+	doFirst {
+		def content = """|NO_OF_CONCURRENT_WORKER=$noOfConcurrentWorker
+        |BATCH_SIZE=$batchSize
+        |GRAPHQL_API_URL=$graphQLApi
+        |AUTH_SECRET=$authSecret
+		|KI_API_URL=$kiApi
+		|INTERNAL_SCHEDULER_INTERVAL=$internalSchedulerInterval
+        |""".stripMargin()
+		def file = new File("build.env")
+		file.write(content)
+		println "Wrote graphQlApi '$graphQLApi', batchSize '$batchSize', authSecret '$authSecret', kiApi '$kiApi', " +
+				"internalSchedulerInterval '$internalSchedulerInterval' and noOfConcurrentWorker '$noOfConcurrentWorker' to build.env"
+	}
+}
