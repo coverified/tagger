@@ -49,13 +49,13 @@ object Supervisor extends LazyLogging {
       graphQL: SupervisorGraphQLConnector,
       workerPool: ActorRef[TaggerEvent],
       existingTags: Set[TagView],
-      tagStore: Set[Tags] = Set.empty,
+      tagStore: Vector[Tags] = Vector.empty,
       persistenceStore: Vector[Persisted] = Vector.empty,
       processedEntries: Int = 0
   ) {
     def clean: TaggerSupervisorData =
       this.copy(
-        tagStore = Set.empty,
+        tagStore = Vector.empty,
         persistenceStore = Vector.empty,
         processedEntries = 0
       )
@@ -125,8 +125,9 @@ object Supervisor extends LazyLogging {
             Behaviors.same
           case StartTagging =>
             logger.info("Starting tagging process ...")
-            startTagging(data, data.cfg.noOfConcurrentWorker, ctx)
-            tagging(data, ctx, msgBuffer)
+            val updatedData =
+              startTagging(data, data.cfg.noOfConcurrentWorker, ctx)
+            tagging(updatedData, ctx, msgBuffer)
           case invalid =>
             logger.warn(s"Received invalid msg '$invalid' when in idle.")
             Behaviors.unhandled
@@ -147,9 +148,9 @@ object Supervisor extends LazyLogging {
         Behaviors.same
       case tagData: Tags =>
         processNewTags(data, tagData) match {
-          case (_, None) =>
+          case (updatedData, None) =>
             // still waiting for replies from tagger instances, just stay here
-            Behaviors.same
+            tagging(updatedData, ctx, msgBuffer)
           case (updatedData, Some(tags)) =>
             // all replies received; mutate tags + let worker persist entities
             val allTags = if (tags.nonEmpty) {
@@ -166,20 +167,21 @@ object Supervisor extends LazyLogging {
 
       case persisted: Persisted =>
         processPersisted(data, persisted) match {
-          case (_, None) =>
+          case (updatedData, None, _) =>
             // still waiting for persist cmd results from workers, just stay here
-            Behaviors.same
-          case (updatedData, Some(allEntitiesTagged)) if !allEntitiesTagged =>
+            tagging(updatedData, ctx, msgBuffer)
+          case (updatedData, Some(allEntitiesTagged), _)
+              if !allEntitiesTagged =>
             // not done yet, start next tagging round
             tagging(
               startTagging(updatedData, data.cfg.noOfConcurrentWorker, ctx),
               ctx,
               msgBuffer
             )
-          case (updatedData, Some(_)) =>
+          case (updatedData, Some(_), processedEntries) =>
             // tagging for all entities done, cleanup, unstash and return to idle
             logger.info(
-              s"Tagging process complete! Tagged ${updatedData.processedEntries} entries!"
+              s"Tagging process completed! Tagged $processedEntries entries!"
             )
             updatedData.clean
             msgBuffer.unstashAll(idle(updatedData, msgBuffer))
@@ -216,7 +218,7 @@ object Supervisor extends LazyLogging {
       data: TaggerSupervisorData,
       tagsWithEntryNo: Tags
   ): (TaggerSupervisorData, Option[Set[Tag]]) = {
-    val allReceivedTags = data.tagStore + tagsWithEntryNo
+    val allReceivedTags = data.tagStore :+ tagsWithEntryNo
 
     Option.when(allReceivedTags.size == data.cfg.noOfConcurrentWorker) {
       // build mutations for new tags
@@ -226,7 +228,7 @@ object Supervisor extends LazyLogging {
     } match {
       case Some(tags) =>
         // clean tag store + return mutations
-        (data.copy(tagStore = Set.empty), Some(tags))
+        (data.copy(tagStore = Vector.empty), Some(tags.toSet))
       case None =>
         // not yet all results
         (data.copy(tagStore = allReceivedTags), None)
@@ -251,22 +253,25 @@ object Supervisor extends LazyLogging {
   private def processPersisted(
       data: TaggerSupervisorData,
       persisted: Persisted
-  ): (TaggerSupervisorData, Option[Boolean]) = {
+  ): (TaggerSupervisorData, Option[Boolean], Long) = {
     val allPersistedEntries = data.persistenceStore :+ persisted
+    val entryNo = allPersistedEntries.map(_.entries).sum
     Option.when(allPersistedEntries.size == data.cfg.noOfConcurrentWorker) {
       // all entries persisted, check if we have handled all entries
       // all entries are tagged if sum of entries < worker * batchSize
-      allPersistedEntries
-        .map(_.entries)
-        .sum < data.cfg.batchSize * data.cfg.noOfConcurrentWorker
+      entryNo < data.cfg.batchSize * data.cfg.noOfConcurrentWorker
     } match {
       case Some(allEntriesTagged) =>
         // all entries persisted
         // clean persistence store + return
-        (data.copy(persistenceStore = Vector.empty), Some(allEntriesTagged))
+        (
+          data.copy(persistenceStore = Vector.empty),
+          Some(allEntriesTagged),
+          entryNo
+        )
       case None =>
         // not yet all entries persisted
-        (data.copy(persistenceStore = allPersistedEntries), None)
+        (data.copy(persistenceStore = allPersistedEntries), None, entryNo)
     }
   }
 }
