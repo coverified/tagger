@@ -31,14 +31,21 @@ configurations {
 }
 
 repositories {
-	jcenter() //searches in bintray's repository 'jCenter', which contains Maven Central
+	mavenCentral() //searches in bintray's repository 'jCenter', which contains Maven Central
 	maven { url 'https://jitpack.io' }
 }
 
 dependencies {
 
 	// coverified dependencies
-	implementation 'com.github.coverified:graphQLConnector:74ca993'
+	implementation 'com.github.coverified:graphQLConnector:4d29611'
+
+	// CORE akka //
+	implementation platform("com.typesafe.akka:akka-bom_${scalaVersion}:2.6.15")
+	implementation "com.typesafe.akka:akka-actor-typed_${scalaVersion}"
+
+	implementation "com.typesafe.akka:akka-stream_${scalaVersion}"
+	testImplementation "com.typesafe.akka:akka-actor-testkit-typed_${scalaVersion}"
 
 	// cmd args parser //
 	implementation "com.github.scopt:scopt_${scalaVersion}:4.0.0"
