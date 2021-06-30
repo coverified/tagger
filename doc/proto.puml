@@ -1,0 +1,42 @@
+@startuml
+participant Supervisor
+collections Tagger
+database API
+entity KI
+
+group init
+Supervisor -> API : QueryExistingTags
+API -> Supervisor : ExistingTags
+end group
+
+loop until Tags(_, entries) => entries == 0 for all Tagger
+Supervisor -> Tagger : ? TagEntries(skip:Int)
+
+Tagger -> API : QueryEntries
+note left
+1) all w/o tags
+2) entries with update date < 48h
+end note
+
+API -> Tagger : Entries
+
+Tagger -> KI : RequestTags4Entry
+KI -> Tagger : Tags4Entry
+Tagger -> Supervisor : ! Tags(tags:Seq[Tags], entries: Int)
+
+rnote over Supervisor: flatten tags
+rnote over Supervisor: filter existing tags
+
+Supervisor -> API : MutateNewTags
+API -> Supervisor: NewTags
+
+rnote over Supervisor: create set of all tags
+
+Supervisor -> Tagger: ? TagAndPersist(allTags)
+
+Tagger -> API: MutateEntry
+API -> Tagger: MutatedEntry
+
+Tagger -> Supervisor: ! Persisted
+end loop
+@enduml
