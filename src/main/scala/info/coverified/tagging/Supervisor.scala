@@ -51,7 +51,7 @@ object Supervisor extends LazyLogging {
       existingTags: Set[TagView],
       tagStore: Vector[Tags] = Vector.empty,
       persistenceStore: Vector[Persisted] = Vector.empty,
-      processedEntries: Int = 0
+      processedEntries: Long = 0
   ) {
     def clean: TaggerSupervisorData =
       this.copy(
@@ -167,21 +167,28 @@ object Supervisor extends LazyLogging {
 
       case persisted: Persisted =>
         processPersisted(data, persisted) match {
-          case (updatedData, None, _) =>
+          case (updatedData, None) =>
             // still waiting for persist cmd results from workers, just stay here
             tagging(updatedData, ctx, msgBuffer)
-          case (updatedData, Some(allEntitiesTagged), _)
-              if !allEntitiesTagged =>
+          case (updatedData, Some(allEntitiesTagged)) if !allEntitiesTagged =>
             // not done yet, start next tagging round
+            logger.info(
+              s"Processed ${updatedData.processedEntries} entries so far, but there are still some left. " +
+                s"Starting next tagging round ..."
+            )
             tagging(
-              startTagging(updatedData, data.cfg.noOfConcurrentWorker, ctx),
+              startTagging(
+                updatedData.copy(persistenceStore = Vector.empty),
+                data.cfg.noOfConcurrentWorker,
+                ctx
+              ),
               ctx,
               msgBuffer
             )
-          case (updatedData, Some(_), processedEntries) =>
+          case (updatedData, Some(_)) =>
             // tagging for all entities done, cleanup, unstash and return to idle
             logger.info(
-              s"Tagging process completed! Tagged $processedEntries entries!"
+              s"Tagging process completed! Tagged ${updatedData.processedEntries} entries!"
             )
             updatedData.clean
             msgBuffer.unstashAll(idle(updatedData, msgBuffer))
@@ -200,18 +207,17 @@ object Supervisor extends LazyLogging {
       ctx: ActorContext[TaggerSupervisorEvent]
   )(implicit timeout: Timeout = 5 seconds): TaggerSupervisorData = {
 
-    val currentlyProcessedEntries =
-      (0 until noOfWorkers).foldLeft(data.processedEntries)(
-        (skip, _) => {
-          ctx.ask(data.workerPool, Tagger.TagEntries(skip, _)) {
-            case Success(TagEntriesResponse(tags)) =>
-              Tags(tags)
-            case Failure(_) => ??? // todo JH
-          }
-          skip + data.cfg.batchSize
+    (0 until noOfWorkers).foldLeft(0)(
+      (skip, _) => {
+        ctx.ask(data.workerPool, Tagger.TagEntries(skip, _)) {
+          case Success(TagEntriesResponse(tags)) =>
+            Tags(tags)
+          case Failure(_) => ??? // todo JH
         }
-      )
-    data.copy(processedEntries = currentlyProcessedEntries)
+        skip + data.cfg.batchSize
+      }
+    )
+    data
   }
 
   private def processNewTags(
@@ -253,7 +259,7 @@ object Supervisor extends LazyLogging {
   private def processPersisted(
       data: TaggerSupervisorData,
       persisted: Persisted
-  ): (TaggerSupervisorData, Option[Boolean], Long) = {
+  ): (TaggerSupervisorData, Option[Boolean]) = {
     val allPersistedEntries = data.persistenceStore :+ persisted
     val entryNo = allPersistedEntries.map(_.entries).sum
     Option.when(allPersistedEntries.size == data.cfg.noOfConcurrentWorker) {
@@ -262,16 +268,18 @@ object Supervisor extends LazyLogging {
       entryNo < data.cfg.batchSize * data.cfg.noOfConcurrentWorker
     } match {
       case Some(allEntriesTagged) =>
-        // all entries persisted
+        // all entries tagged
         // clean persistence store + return
         (
-          data.copy(persistenceStore = Vector.empty),
-          Some(allEntriesTagged),
-          entryNo
+          data.copy(
+            persistenceStore = Vector.empty,
+            processedEntries = data.processedEntries + entryNo
+          ),
+          Some(allEntriesTagged)
         )
       case None =>
         // not yet all entries persisted
-        (data.copy(persistenceStore = allPersistedEntries), None, entryNo)
+        (data.copy(persistenceStore = allPersistedEntries), None)
     }
   }
 }

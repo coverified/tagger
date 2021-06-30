@@ -7,6 +7,7 @@ package info.coverified.tagging
 
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior}
+import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.GraphQLConnector.{
   EntryView,
   TagView,
@@ -14,7 +15,7 @@ import info.coverified.graphql.GraphQLConnector.{
 }
 import info.coverified.tagging.ai.AiConnector
 
-object Tagger {
+object Tagger extends LazyLogging {
 
   sealed trait TaggerEvent
 
