@@ -4,7 +4,13 @@ plugins {
 	id 'scala' // scala support
 	id 'com.diffplug.spotless' version '5.12.5'//code format
 	id 'com.github.johnrengelman.shadow' version '7.0.0' // fat jar
+	id 'application'
 }
+
+application {
+	mainClassName = 'info.coverified.tagging.main.Main'
+}
+
 
 ext {
 
@@ -20,7 +26,6 @@ ext {
 
 apply from: scriptsLocation + 'spotless.gradle'
 apply from: scriptsLocation + 'prepareEnv.gradle'
-
 
 group = 'info.coverified'
 version = '0.1-SNAPSHOT'
