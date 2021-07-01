@@ -15,17 +15,17 @@ import info.coverified.graphql.GraphQLConnector.{
   ZIOTaggerGraphQLConnector
 }
 import info.coverified.tagging.Tagger.{
-  PersistEntriesResponse,
   TagEntriesResponse,
   TaggerData,
   TaggerEvent
 }
 import info.coverified.tagging.ai.AiConnector.DummyTaggerAiConnector
 import info.coverified.tagging.main.Config
+import akka.actor.typed.scaladsl.AskPattern._
 
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.concurrent.duration.DurationInt
-import scala.language.postfixOps
+import scala.language.{existentials, postfixOps}
 import scala.util.{Failure, Success}
 
 object Supervisor extends LazyLogging {
@@ -41,10 +41,14 @@ object Supervisor extends LazyLogging {
   private type Tag = String
 
   private final case class Tags(tags: Set[Tag]) extends TaggerSupervisorEvent
+
   private final case class TaggingFailed(exception: Throwable)
       extends TaggerSupervisorEvent
 
   private final case class Persisted(entries: Int) extends TaggerSupervisorEvent
+
+  private final case class PersistenceFailed(throwable: Throwable)
+      extends TaggerSupervisorEvent
 
   // data
   private final case class TaggerSupervisorData(
@@ -53,13 +57,10 @@ object Supervisor extends LazyLogging {
       workerPool: ActorRef[TaggerEvent],
       existingTags: Set[TagView],
       tagStore: Vector[Tags] = Vector.empty,
-      persistenceStore: Vector[Persisted] = Vector.empty,
       processedEntries: Long = 0
   ) {
     def clean: TaggerSupervisorData =
       this.copy(
-        tagStore = Vector.empty,
-        persistenceStore = Vector.empty,
         processedEntries = 0
       )
   }
@@ -129,7 +130,11 @@ object Supervisor extends LazyLogging {
           case StartTagging =>
             logger.info("Starting tagging process ...")
             ctx.pipeToSelf(
-              startTagging(data, data.cfg.noOfConcurrentWorker, ctx)
+              startTagging(
+                data.workerPool,
+                data.cfg.batchSize,
+                data.cfg.noOfConcurrentWorker
+              )(ctx.system, ctx.executionContext)
             ) {
               case Failure(exception) =>
                 TaggingFailed(exception)
@@ -166,7 +171,18 @@ object Supervisor extends LazyLogging {
           data.copy(existingTags = allTags)
         } else data
 
-        persistEntries(updatedData.existingTags, updatedData, ctx)
+        ctx.pipeToSelf(
+          persistEntries(
+            updatedData.existingTags,
+            updatedData.workerPool,
+            updatedData.cfg.noOfConcurrentWorker
+          )(ctx.system, ctx.executionContext)
+        ) {
+          case Failure(exception) =>
+            PersistenceFailed(exception)
+          case Success(noOfPersistedEntries) =>
+            Persisted(noOfPersistedEntries)
+        }
         tagging(updatedData, ctx, msgBuffer)
 
       case TaggingFailed(exception) =>
@@ -176,11 +192,13 @@ object Supervisor extends LazyLogging {
         Behaviors.same
 
       case persisted: Persisted =>
-        processPersisted(data, persisted) match {
-          case (updatedData, None) =>
-            // still waiting for persist cmd results from workers, just stay here
-            tagging(updatedData, ctx, msgBuffer)
-          case (updatedData, Some(allEntitiesTagged)) if !allEntitiesTagged =>
+        processPersisted(
+          persisted,
+          data,
+          data.cfg.batchSize,
+          data.cfg.noOfConcurrentWorker
+        ) match {
+          case (updatedData, allEntriesTagged) if !allEntriesTagged =>
             // not done yet, start next tagging round
             logger.info(
               s"Processed ${updatedData.processedEntries} entries so far, but there are still some left. " +
@@ -188,10 +206,10 @@ object Supervisor extends LazyLogging {
             )
             ctx.pipeToSelf(
               startTagging(
-                updatedData.copy(persistenceStore = Vector.empty),
-                data.cfg.noOfConcurrentWorker,
-                ctx
-              )
+                data.workerPool,
+                data.cfg.batchSize,
+                data.cfg.noOfConcurrentWorker
+              )(ctx.system, ctx.executionContext)
             ) {
               case Failure(exception) =>
                 TaggingFailed(exception)
@@ -199,7 +217,8 @@ object Supervisor extends LazyLogging {
                 Tags(tags.toSet)
             }
             tagging(updatedData, ctx, msgBuffer)
-          case (updatedData, Some(_)) =>
+
+          case (updatedData, _) =>
             // tagging for all entities done, cleanup, unstash and return to idle
             logger.info(
               s"Tagging process completed! Tagged ${updatedData.processedEntries} entries!"
@@ -207,6 +226,12 @@ object Supervisor extends LazyLogging {
             updatedData.clean
             msgBuffer.unstashAll(idle(updatedData, msgBuffer))
         }
+
+      case PersistenceFailed(exception) =>
+        // Persisted(...) cmd failed
+        // a potential retry must be done here
+        logger.error("Persisting failed with exception: ", exception) // todo sentry integration
+        Behaviors.same
 
       case invalidMsg =>
         logger.error(
@@ -216,24 +241,23 @@ object Supervisor extends LazyLogging {
     }
 
   private def startTagging(
-      data: TaggerSupervisorData,
-      noOfWorkers: Int,
-      ctx: ActorContext[TaggerSupervisorEvent]
-  )(implicit timeout: Timeout = 5 seconds): Future[Vector[Tag]] = {
-
-    // todo move up
-    import akka.actor.typed.scaladsl.AskPattern._
-    implicit val ec: ExecutionContextExecutor = ctx.system.executionContext
-    implicit val system: ActorSystem[Nothing] = ctx.system
-
+      workerPool: ActorRef[TaggerEvent],
+      batchSize: Int,
+      noOfWorkers: Int
+  )(
+      implicit
+      system: ActorSystem[Nothing],
+      executionContextExecutor: ExecutionContextExecutor,
+      timeout: Timeout = 5 seconds
+  ): Future[Vector[Tag]] = {
     Future
       .sequence(
         (0 until noOfWorkers)
           .foldLeft((0, Vector.empty[Future[TagEntriesResponse]])) {
-            case ((skip, futures), _) =>
-              val fut =
-                data.workerPool.ask(replyTo => Tagger.TagEntries(skip, replyTo))
-              (skip + data.cfg.batchSize, futures :+ fut)
+            case ((skip, requests), _) =>
+              val ask =
+                workerPool.ask(replyTo => Tagger.TagEntries(skip, replyTo))
+              (skip + batchSize, requests :+ ask)
           }
           ._2
       )
@@ -242,43 +266,34 @@ object Supervisor extends LazyLogging {
 
   private def persistEntries(
       allTags: Set[TagView],
-      data: TaggerSupervisorData,
-      ctx: ActorContext[TaggerSupervisorEvent]
-  )(implicit timeout: Timeout = 5 seconds): Unit = {
-    (0 until data.cfg.noOfConcurrentWorker).foreach(
-      _ =>
-        ctx.ask(data.workerPool, Tagger.PersistEntries(allTags, _)) {
-          case Success(PersistEntriesResponse(entries)) =>
-            Persisted(entries)
-          case Failure(_) => ??? // todo JH
-        }
-    )
+      workerPool: ActorRef[TaggerEvent],
+      noOfWorkers: Int
+  )(
+      implicit system: ActorSystem[Nothing],
+      executionContextExecutor: ExecutionContextExecutor,
+      timeout: Timeout = 5 seconds
+  ): Future[Int] = {
+    Future
+      .sequence(
+        (0 until noOfWorkers) map (_ => {
+          workerPool.ask(replyTo => Tagger.PersistEntries(allTags, replyTo))
+        })
+      )
+      .map(_.map(_.entries).sum)
   }
 
   private def processPersisted(
+      persisted: Persisted,
       data: TaggerSupervisorData,
-      persisted: Persisted
-  ): (TaggerSupervisorData, Option[Boolean]) = {
-    val allPersistedEntries = data.persistenceStore :+ persisted
-    val entryNo = allPersistedEntries.map(_.entries).sum
-    Option.when(allPersistedEntries.size == data.cfg.noOfConcurrentWorker) {
-      // all entries persisted, check if we have handled all entries
-      // all entries are tagged if sum of entries < worker * batchSize
-      entryNo < data.cfg.batchSize * data.cfg.noOfConcurrentWorker
-    } match {
-      case Some(allEntriesTagged) =>
-        // all entries tagged
-        // clean persistence store + return
-        (
-          data.copy(
-            persistenceStore = Vector.empty,
-            processedEntries = data.processedEntries + entryNo
-          ),
-          Some(allEntriesTagged)
-        )
-      case None =>
-        // not yet all entries persisted
-        (data.copy(persistenceStore = allPersistedEntries), None)
-    }
+      batchSize: Int,
+      noOfWorkers: Int
+  ): (TaggerSupervisorData, Boolean) = {
+
+    // all entries are tagged if sum of entries < worker * batchSize
+    val allEntriesPersisted = persisted.entries < batchSize * noOfWorkers
+    (
+      data.copy(processedEntries = data.processedEntries + persisted.entries),
+      allEntriesPersisted
+    )
   }
 }
