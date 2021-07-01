@@ -317,6 +317,7 @@ object Supervisor extends LazyLogging {
       data: TaggerSupervisorData,
       ctx: ActorContext[TaggerSupervisorEvent]
   ): Unit = {
+    logger.info("Tagger shutdown initiated ...")
     logger.info("Stats:")
     logger.info(s"Start: ${new Date(data.startDate)}")
     logger.info(
