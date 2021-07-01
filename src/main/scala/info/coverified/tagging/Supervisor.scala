@@ -10,11 +10,13 @@ import akka.actor.typed.scaladsl.{ActorContext, Behaviors, Routers, StashBuffer}
 import akka.util.Timeout
 import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.GraphQLConnector.{
+  DummyTaggerGraphQLConnector,
   SupervisorGraphQLConnector,
   TagView,
   ZIOTaggerGraphQLConnector
 }
 import info.coverified.tagging.Tagger.{
+  GracefulShutdown,
   TagEntriesResponse,
   TaggerData,
   TaggerEvent
@@ -23,6 +25,7 @@ import info.coverified.tagging.ai.AiConnector.DummyTaggerAiConnector
 import info.coverified.tagging.main.Config
 import akka.actor.typed.scaladsl.AskPattern._
 
+import java.util.Date
 import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.concurrent.duration.DurationInt
 import scala.language.{existentials, postfixOps}
@@ -50,12 +53,15 @@ object Supervisor extends LazyLogging {
   private final case class PersistenceFailed(throwable: Throwable)
       extends TaggerSupervisorEvent
 
+  private final case object IdleTimeout extends TaggerSupervisorEvent
+
   // data
   private final case class TaggerSupervisorData(
       cfg: Config, // todo cfg replace with interfaces for easier testing
       graphQL: SupervisorGraphQLConnector,
       workerPool: ActorRef[TaggerEvent],
       existingTags: Set[TagView],
+      startDate: Long = System.currentTimeMillis(),
       tagStore: Vector[Tags] = Vector.empty,
       processedEntries: Long = 0
   ) {
@@ -65,6 +71,8 @@ object Supervisor extends LazyLogging {
       )
   }
 
+  private final val SHUTDOWN_TIMEOUT = 10 seconds
+
   def apply(): Behavior[TaggerSupervisorEvent] = uninitialized()
 
   private def uninitialized(): Behavior[TaggerSupervisorEvent] = {
@@ -73,6 +81,10 @@ object Supervisor extends LazyLogging {
         case (ctx, Init(cfg, graphQLConnector: SupervisorGraphQLConnector)) =>
           logger.info("Initializing Tagger ...")
           // todo scheduler
+
+          // idle timeout to shutdown after some time
+          if (cfg.internalScheduleInterval == -1)
+            ctx.setReceiveTimeout(SHUTDOWN_TIMEOUT, IdleTimeout)
 
           // spawn router pool
           val workerPool = ctx.spawn(
@@ -89,6 +101,7 @@ object Supervisor extends LazyLogging {
               .withRoundRobinRouting(),
             "tagger-pool"
           )
+          ctx.watch(workerPool)
 
           // query existing tags
           logger.info("Querying existing tags ...")
@@ -142,6 +155,9 @@ object Supervisor extends LazyLogging {
                 Tags(tags.toSet)
             }
             tagging(data, ctx, msgBuffer)
+          case IdleTimeout =>
+            shutdown(data, ctx)
+            Behaviors.stopped
           case invalid =>
             logger.warn(s"Received invalid msg '$invalid' when in idle.")
             Behaviors.unhandled
@@ -296,4 +312,28 @@ object Supervisor extends LazyLogging {
       allEntriesPersisted
     )
   }
+
+  private def shutdown(
+      data: TaggerSupervisorData,
+      ctx: ActorContext[TaggerSupervisorEvent]
+  ): Unit = {
+    logger.info("Stats:")
+    logger.info(s"Start: ${new Date(data.startDate)}")
+    logger.info(
+      s"End: ${new Date(System.currentTimeMillis() - SHUTDOWN_TIMEOUT.toMillis)}"
+    )
+    logger.info(
+      s"Duration: ${(System.currentTimeMillis() - SHUTDOWN_TIMEOUT.toMillis - data.startDate) / 1000}s"
+    )
+
+    ctx.cancelReceiveTimeout()
+
+    data.graphQL.close()
+
+    data.workerPool ! GracefulShutdown
+    ctx.unwatch(data.workerPool)
+
+    ctx.system.terminate()
+  }
+
 }

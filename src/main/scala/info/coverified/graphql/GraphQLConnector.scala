@@ -49,6 +49,8 @@ object GraphQLConnector {
     def queryAllExistingTags: Set[TagView]
 
     def mutateTags(tags: Set[String]): Set[TagView]
+
+    def close(): Unit
   }
 
   final case class ZIOSupervisorGraphQLConnector(
@@ -58,10 +60,11 @@ object GraphQLConnector {
       with LazyLogging {
 
     private val runtime: zio.Runtime[zio.ZEnv] = zio.Runtime.default
+    private val client = new DefaultAsyncHttpClient()
     private val backend: SttpBackend[Task, ZioStreams] =
       AsyncHttpClientZioBackend.usingClient(
         runtime,
-        new DefaultAsyncHttpClient()
+        client
       )
 
     private val existingTagsQuery =
@@ -132,6 +135,11 @@ object GraphQLConnector {
               )
           )
       )
+
+    override def close: Unit = {
+      client.close()
+      backend.close()
+    }
   }
 
   final case class DummySupervisorGraphQLConnector()
@@ -156,6 +164,8 @@ object GraphQLConnector {
     }
 
     override val authSecret: String = "NO_AUTH_REQUIRED"
+
+    override def close: Unit = {}
   }
 
   sealed trait TaggerGraphQLConnector extends GraphQLConnector {
@@ -165,7 +175,9 @@ object GraphQLConnector {
     def updateEntryWithTags(
         entryUuid: String,
         tagUuids: Set[String]
-    ): Option[EntryView] // todo JH consider returning something
+    ): Option[EntryView]
+
+    def close(): Unit
   }
 
   final case class ZIOTaggerGraphQLConnector(
@@ -175,10 +187,11 @@ object GraphQLConnector {
       with LazyLogging {
 
     private val runtime: zio.Runtime[zio.ZEnv] = zio.Runtime.default
+    private val client = new DefaultAsyncHttpClient()
     private val backend: SttpBackend[Task, ZioStreams] =
       AsyncHttpClientZioBackend.usingClient(
         runtime,
-        new DefaultAsyncHttpClient()
+        client
       )
 
     private val fullEntryViewInnerSelection = Entry.view(
@@ -245,7 +258,19 @@ object GraphQLConnector {
               ZIO.succeed(Set.empty[EntryView])
             },
             suc =>
-              ZIO.succeed(suc.body.getOrElse(Set.empty).iterator.flatten.toSet)
+              ZIO
+                .succeed(
+                  suc.body match {
+                    case Left(error) =>
+                      logger.error(
+                        "API returned error on entity query: ",
+                        error
+                      ) // todo sentry integration
+                      Set.empty[EntryView]
+                    case Right(entries) =>
+                      entries.map(_.toSet).getOrElse(Set.empty)
+                  }
+                )
           )
       )
     }
@@ -284,6 +309,11 @@ object GraphQLConnector {
           )
       )
     }
+
+    override def close(): Unit = {
+      client.close()
+      backend.close()
+    }
   }
 
   final case class DummyTaggerGraphQLConnector()
@@ -309,6 +339,8 @@ object GraphQLConnector {
     }
 
     override val authSecret: String = "NO_AUTH_REQUIRED"
+
+    override def close(): Unit = {}
   }
 
 }

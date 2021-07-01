@@ -31,6 +31,8 @@ object Tagger extends LazyLogging {
 
   final case class PersistEntriesResponse(entries: Int)
 
+  final case object GracefulShutdown extends TaggerEvent
+
   private type TaggingResult = (Set[String], EntryView)
 
   final case class TaggerData(
@@ -72,6 +74,10 @@ object Tagger extends LazyLogging {
         replyTo ! PersistEntriesResponse(data.currentTaggingResults.size)
 
         apply(data.copy(currentTaggingResults = Vector.empty))
+
+      case GracefulShutdown =>
+        data.graphQL.close()
+        Behaviors.stopped
     }
 
 }
