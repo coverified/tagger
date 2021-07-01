@@ -93,3 +93,10 @@ dependencies {
 	// CORE Scala //
 	implementation "org.scala-lang:scala-library:${scalaBinaryVersion}"
 }
+
+shadowJar {
+	transform(AppendingTransformer) {
+		resource = 'reference.conf'
+	}
+	with jar
+}
