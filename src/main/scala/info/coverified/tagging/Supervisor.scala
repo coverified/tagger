@@ -5,7 +5,7 @@
 
 package info.coverified.tagging
 
-import akka.actor.typed.{ActorRef, Behavior}
+import akka.actor.typed.{ActorRef, ActorSystem, Behavior}
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, Routers, StashBuffer}
 import akka.util.Timeout
 import com.typesafe.scalalogging.LazyLogging
@@ -23,6 +23,7 @@ import info.coverified.tagging.Tagger.{
 import info.coverified.tagging.ai.AiConnector.DummyTaggerAiConnector
 import info.coverified.tagging.main.Config
 
+import scala.concurrent.{ExecutionContextExecutor, Future}
 import scala.concurrent.duration.DurationInt
 import scala.language.postfixOps
 import scala.util.{Failure, Success}
@@ -40,6 +41,8 @@ object Supervisor extends LazyLogging {
   private type Tag = String
 
   private final case class Tags(tags: Set[Tag]) extends TaggerSupervisorEvent
+  private final case class TaggingFailed(exception: Throwable)
+      extends TaggerSupervisorEvent
 
   private final case class Persisted(entries: Int) extends TaggerSupervisorEvent
 
@@ -125,9 +128,15 @@ object Supervisor extends LazyLogging {
             Behaviors.same
           case StartTagging =>
             logger.info("Starting tagging process ...")
-            val updatedData =
+            ctx.pipeToSelf(
               startTagging(data, data.cfg.noOfConcurrentWorker, ctx)
-            tagging(updatedData, ctx, msgBuffer)
+            ) {
+              case Failure(exception) =>
+                TaggingFailed(exception)
+              case Success(tags) =>
+                Tags(tags.toSet)
+            }
+            tagging(data, ctx, msgBuffer)
           case invalid =>
             logger.warn(s"Received invalid msg '$invalid' when in idle.")
             Behaviors.unhandled
@@ -147,23 +156,24 @@ object Supervisor extends LazyLogging {
         msgBuffer.stash(StartTagging)
         Behaviors.same
       case tagData: Tags =>
-        processNewTags(data, tagData) match {
-          case (updatedData, None) =>
-            // still waiting for replies from tagger instances, just stay here
-            tagging(updatedData, ctx, msgBuffer)
-          case (updatedData, Some(tags)) =>
-            // all replies received; mutate tags + let worker persist entities
-            val allTags = if (tags.nonEmpty) {
-              logger.info(s"Mutating ${tags.size} new tags ...")
-              val newTags: Set[TagView] = data.graphQL.mutateTags(tags)
-              val allTags = newTags ++ updatedData.existingTags
-              logger.info(s"Mutation done. Overall tag no: ${allTags.size}")
-              allTags
-            } else updatedData.existingTags
+        // all replies received; mutate tags + let worker persist entities
+        val newTags = tagData.tags.filterNot(data.existingTags.flatMap(_.name))
+        val updatedData = if (newTags.nonEmpty) {
+          logger.info(s"Mutating ${newTags.size} new tags ...")
+          val newTagViews: Set[TagView] = data.graphQL.mutateTags(newTags)
+          val allTags = newTagViews ++ data.existingTags
+          logger.info(s"Mutation done. Overall tag no: ${allTags.size}")
+          data.copy(existingTags = allTags)
+        } else data
 
-            persistEntries(allTags, updatedData, ctx)
-            tagging(updatedData.copy(existingTags = allTags), ctx, msgBuffer)
-        }
+        persistEntries(updatedData.existingTags, updatedData, ctx)
+        tagging(updatedData, ctx, msgBuffer)
+
+      case TaggingFailed(exception) =>
+        // TagEntries(...) cmd failed
+        // a potential retry must be done here
+        logger.error("Tagging failed with exception: ", exception) // todo sentry integration
+        Behaviors.same
 
       case persisted: Persisted =>
         processPersisted(data, persisted) match {
@@ -176,15 +186,19 @@ object Supervisor extends LazyLogging {
               s"Processed ${updatedData.processedEntries} entries so far, but there are still some left. " +
                 s"Starting next tagging round ..."
             )
-            tagging(
+            ctx.pipeToSelf(
               startTagging(
                 updatedData.copy(persistenceStore = Vector.empty),
                 data.cfg.noOfConcurrentWorker,
                 ctx
-              ),
-              ctx,
-              msgBuffer
-            )
+              )
+            ) {
+              case Failure(exception) =>
+                TaggingFailed(exception)
+              case Success(tags) =>
+                Tags(tags.toSet)
+            }
+            tagging(updatedData, ctx, msgBuffer)
           case (updatedData, Some(_)) =>
             // tagging for all entities done, cleanup, unstash and return to idle
             logger.info(
@@ -205,40 +219,25 @@ object Supervisor extends LazyLogging {
       data: TaggerSupervisorData,
       noOfWorkers: Int,
       ctx: ActorContext[TaggerSupervisorEvent]
-  )(implicit timeout: Timeout = 5 seconds): TaggerSupervisorData = {
+  )(implicit timeout: Timeout = 5 seconds): Future[Vector[Tag]] = {
 
-    (0 until noOfWorkers).foldLeft(0)(
-      (skip, _) => {
-        ctx.ask(data.workerPool, Tagger.TagEntries(skip, _)) {
-          case Success(TagEntriesResponse(tags)) =>
-            Tags(tags)
-          case Failure(_) => ??? // todo JH
-        }
-        skip + data.cfg.batchSize
-      }
-    )
-    data
-  }
+    // todo move up
+    import akka.actor.typed.scaladsl.AskPattern._
+    implicit val ec: ExecutionContextExecutor = ctx.system.executionContext
+    implicit val system: ActorSystem[Nothing] = ctx.system
 
-  private def processNewTags(
-      data: TaggerSupervisorData,
-      tagsWithEntryNo: Tags
-  ): (TaggerSupervisorData, Option[Set[Tag]]) = {
-    val allReceivedTags = data.tagStore :+ tagsWithEntryNo
-
-    Option.when(allReceivedTags.size == data.cfg.noOfConcurrentWorker) {
-      // build mutations for new tags
-      allReceivedTags
-        .flatMap(_.tags)
-        .filterNot(data.existingTags.flatMap(_.name))
-    } match {
-      case Some(tags) =>
-        // clean tag store + return mutations
-        (data.copy(tagStore = Vector.empty), Some(tags.toSet))
-      case None =>
-        // not yet all results
-        (data.copy(tagStore = allReceivedTags), None)
-    }
+    Future
+      .sequence(
+        (0 until noOfWorkers)
+          .foldLeft((0, Vector.empty[Future[TagEntriesResponse]])) {
+            case ((skip, futures), _) =>
+              val fut =
+                data.workerPool.ask(replyTo => Tagger.TagEntries(skip, replyTo))
+              (skip + data.cfg.batchSize, futures :+ fut)
+          }
+          ._2
+      )
+      .map(_.flatMap(_.tags))
   }
 
   private def persistEntries(
