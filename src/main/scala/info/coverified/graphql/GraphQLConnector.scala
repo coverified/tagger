@@ -136,7 +136,7 @@ object GraphQLConnector {
           )
       )
 
-    override def close: Unit = {
+    override def close(): Unit = {
       client.close()
       backend.close()
     }
@@ -165,7 +165,7 @@ object GraphQLConnector {
 
     override val authSecret: String = "NO_AUTH_REQUIRED"
 
-    override def close: Unit = {}
+    override def close(): Unit = {}
   }
 
   sealed trait TaggerGraphQLConnector extends GraphQLConnector {
