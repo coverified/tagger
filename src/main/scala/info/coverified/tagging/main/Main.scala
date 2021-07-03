@@ -1,13 +1,16 @@
 /**
  * © 2021. CoVerified,
  * Diehl, Fetzer, Hiry, Kilian, Mayer, Schlittenbauer, Schweikert, Vollnhals, Weise GbR
- * */
+ **/
 
 package info.coverified.tagging.main
 
 import akka.actor.typed.ActorSystem
 import com.typesafe.scalalogging.LazyLogging
-import info.coverified.graphql.GraphQLConnector.{DummySupervisorGraphQLConnector, ZIOSupervisorGraphQLConnector}
+import info.coverified.graphql.GraphQLConnector.{
+  DummySupervisorGraphQLConnector,
+  ZIOSupervisorGraphQLConnector
+}
 import info.coverified.tagging.Supervisor
 
 import scala.util.{Failure, Success}

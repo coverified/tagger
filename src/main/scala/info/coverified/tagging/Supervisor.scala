@@ -61,17 +61,27 @@ object Supervisor extends LazyLogging {
       graphQL: SupervisorGraphQLConnector,
       workerPool: ActorRef[TaggerEvent],
       existingTags: Set[TagView],
-      startDate: Long = System.currentTimeMillis(),
+      taggingStartDate: Long = System.currentTimeMillis(),
+      globalStartDate: Long = System.currentTimeMillis(),
       tagStore: Vector[Tags] = Vector.empty,
-      processedEntries: Long = 0
+      processedEntries: Long = 0,
+      retries: Int = 0
   ) {
     def clean: TaggerSupervisorData =
       this.copy(
-        processedEntries = 0
+        processedEntries = 0,
+        retries = 0
+      )
+
+    def retry: TaggerSupervisorData =
+      this.copy(
+        processedEntries = 0,
+        retries = this.retries + 1
       )
   }
 
   private final val SHUTDOWN_TIMEOUT = 10 seconds
+  private final val MAX_RETRY_NO = 5
 
   def apply(): Behavior[TaggerSupervisorEvent] = uninitialized()
 
@@ -154,7 +164,11 @@ object Supervisor extends LazyLogging {
               case Success(tags) =>
                 Tags(tags.toSet)
             }
-            tagging(data, ctx, msgBuffer)
+            tagging(
+              data.copy(taggingStartDate = System.currentTimeMillis()),
+              ctx,
+              msgBuffer
+            )
           case IdleTimeout =>
             shutdown(data, ctx)
             Behaviors.stopped
@@ -203,9 +217,26 @@ object Supervisor extends LazyLogging {
 
       case TaggingFailed(exception) =>
         // TagEntries(...) cmd failed
-        // a potential retry must be done here
         logger.error("Tagging failed with exception: ", exception) // todo sentry integration
-        Behaviors.same
+        if (data.retries < MAX_RETRY_NO) {
+          logger.info(s"Retrying ... (current retry no: ${data.retries})")
+          ctx.pipeToSelf(
+            startTagging(
+              data.workerPool,
+              data.cfg.batchSize,
+              data.cfg.noOfConcurrentWorker
+            )(ctx.system, ctx.executionContext)
+          ) {
+            case Failure(exception) =>
+              TaggingFailed(exception)
+            case Success(tags) =>
+              Tags(tags.toSet)
+          }
+          tagging(data.retry, ctx, msgBuffer)
+        } else {
+          logger.warn("Max no of retries reached. Going back to idle!")
+          msgBuffer.unstashAll(idle(data.clean, msgBuffer))
+        }
 
       case persisted: Persisted =>
         processPersisted(
@@ -239,15 +270,42 @@ object Supervisor extends LazyLogging {
             logger.info(
               s"Tagging process completed! Tagged ${updatedData.processedEntries} entries!"
             )
-            updatedData.clean
-            msgBuffer.unstashAll(idle(updatedData, msgBuffer))
+            logger.info("--------- Tagging Stats ---------")
+            logger.info(s"Start: ${new Date(data.taggingStartDate)}")
+            logger.info(
+              s"End: ${new Date(System.currentTimeMillis())}"
+            )
+            logger.info(
+              s"Duration: ${(System.currentTimeMillis() - data.taggingStartDate) / 1000}s"
+            )
+            logger.info("---------------------------------")
+
+            msgBuffer.unstashAll(idle(updatedData.clean, msgBuffer))
         }
 
       case PersistenceFailed(exception) =>
         // Persisted(...) cmd failed
         // a potential retry must be done here
         logger.error("Persisting failed with exception: ", exception) // todo sentry integration
-        Behaviors.same
+        if (data.retries < MAX_RETRY_NO) {
+          logger.info(s"Retrying ... (current retry no: ${data.retries})")
+          ctx.pipeToSelf(
+            persistEntries(
+              data.existingTags,
+              data.workerPool,
+              data.cfg.noOfConcurrentWorker
+            )(ctx.system, ctx.executionContext)
+          ) {
+            case Failure(exception) =>
+              PersistenceFailed(exception)
+            case Success(noOfPersistedEntries) =>
+              Persisted(noOfPersistedEntries)
+          }
+          tagging(data.retry, ctx, msgBuffer)
+        } else {
+          logger.warn("Max no of retries reached. Going back to idle!")
+          msgBuffer.unstashAll(idle(data.clean, msgBuffer))
+        }
 
       case invalidMsg =>
         logger.error(
@@ -318,14 +376,15 @@ object Supervisor extends LazyLogging {
       ctx: ActorContext[TaggerSupervisorEvent]
   ): Unit = {
     logger.info("Tagger shutdown initiated ...")
-    logger.info("Stats:")
-    logger.info(s"Start: ${new Date(data.startDate)}")
+    logger.info("--------- Overall Stats ---------")
+    logger.info(s"Start: ${new Date(data.globalStartDate)}")
     logger.info(
       s"End: ${new Date(System.currentTimeMillis() - SHUTDOWN_TIMEOUT.toMillis)}"
     )
     logger.info(
-      s"Duration: ${(System.currentTimeMillis() - SHUTDOWN_TIMEOUT.toMillis - data.startDate) / 1000}s"
+      s"Duration: ${(System.currentTimeMillis() - SHUTDOWN_TIMEOUT.toMillis - data.globalStartDate) / 1000}s"
     )
+    logger.info("---------------------------------")
 
     ctx.cancelReceiveTimeout()
 
