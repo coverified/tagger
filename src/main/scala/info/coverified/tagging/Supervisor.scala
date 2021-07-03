@@ -108,7 +108,8 @@ object Supervisor extends LazyLogging {
                   )
                 )
               )
-              .withRoundRobinRouting(),
+              .withRoundRobinRouting()
+              .withBroadcastPredicate(_.isInstanceOf[GracefulShutdown.type]),
             "tagger-pool"
           )
           ctx.watch(workerPool)

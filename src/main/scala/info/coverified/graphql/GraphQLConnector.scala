@@ -311,7 +311,9 @@ object GraphQLConnector {
     }
 
     override def close(): Unit = {
+      logger.info("Trying to close graphQL connection client ...")
       client.close()
+      logger.info("Trying to close graphQL connection backend ...")
       backend.close()
     }
   }

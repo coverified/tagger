@@ -77,6 +77,7 @@ object Tagger extends LazyLogging {
 
       case GracefulShutdown =>
         data.graphQL.close()
+        logger.info("Tagger shutdown complete!")
         Behaviors.stopped
     }
 
