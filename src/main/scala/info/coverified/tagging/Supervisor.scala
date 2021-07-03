@@ -152,18 +152,11 @@ object Supervisor extends LazyLogging {
             Behaviors.same
           case StartTagging =>
             logger.info("Starting tagging process ...")
-            ctx.pipeToSelf(
-              startTagging(
-                data.workerPool,
-                data.cfg.batchSize,
-                data.cfg.noOfConcurrentWorker
-              )(ctx.system, ctx.executionContext)
-            ) {
-              case Failure(exception) =>
-                TaggingFailed(exception)
-              case Success(tags) =>
-                Tags(tags.toSet)
-            }
+            startTagging(
+              data.workerPool,
+              data.cfg.batchSize,
+              data.cfg.noOfConcurrentWorker
+            )(ctx)
             tagging(
               data.copy(taggingStartDate = System.currentTimeMillis()),
               ctx,
@@ -201,18 +194,11 @@ object Supervisor extends LazyLogging {
           data.copy(existingTags = allTags)
         } else data
 
-        ctx.pipeToSelf(
-          persistEntries(
-            updatedData.existingTags,
-            updatedData.workerPool,
-            updatedData.cfg.noOfConcurrentWorker
-          )(ctx.system, ctx.executionContext)
-        ) {
-          case Failure(exception) =>
-            PersistenceFailed(exception)
-          case Success(noOfPersistedEntries) =>
-            Persisted(noOfPersistedEntries)
-        }
+        persistEntries(
+          updatedData.existingTags,
+          updatedData.workerPool,
+          updatedData.cfg.noOfConcurrentWorker
+        )(ctx)
         tagging(updatedData, ctx, msgBuffer)
 
       case TaggingFailed(exception) =>
@@ -220,18 +206,11 @@ object Supervisor extends LazyLogging {
         logger.error("Tagging failed with exception: ", exception) // todo sentry integration
         if (data.retries < MAX_RETRY_NO) {
           logger.info(s"Retrying ... (current retry no: ${data.retries})")
-          ctx.pipeToSelf(
-            startTagging(
-              data.workerPool,
-              data.cfg.batchSize,
-              data.cfg.noOfConcurrentWorker
-            )(ctx.system, ctx.executionContext)
-          ) {
-            case Failure(exception) =>
-              TaggingFailed(exception)
-            case Success(tags) =>
-              Tags(tags.toSet)
-          }
+          startTagging(
+            data.workerPool,
+            data.cfg.batchSize,
+            data.cfg.noOfConcurrentWorker
+          )(ctx)
           tagging(data.retry, ctx, msgBuffer)
         } else {
           logger.warn("Max no of retries reached. Going back to idle!")
@@ -251,18 +230,11 @@ object Supervisor extends LazyLogging {
               s"Processed ${updatedData.processedEntries} entries so far, but there are still some left. " +
                 s"Starting next tagging round ..."
             )
-            ctx.pipeToSelf(
-              startTagging(
-                data.workerPool,
-                data.cfg.batchSize,
-                data.cfg.noOfConcurrentWorker
-              )(ctx.system, ctx.executionContext)
-            ) {
-              case Failure(exception) =>
-                TaggingFailed(exception)
-              case Success(tags) =>
-                Tags(tags.toSet)
-            }
+            startTagging(
+              data.workerPool,
+              data.cfg.batchSize,
+              data.cfg.noOfConcurrentWorker
+            )(ctx)
             tagging(updatedData, ctx, msgBuffer)
 
           case (updatedData, _) =>
@@ -289,18 +261,12 @@ object Supervisor extends LazyLogging {
         logger.error("Persisting failed with exception: ", exception) // todo sentry integration
         if (data.retries < MAX_RETRY_NO) {
           logger.info(s"Retrying ... (current retry no: ${data.retries})")
-          ctx.pipeToSelf(
-            persistEntries(
-              data.existingTags,
-              data.workerPool,
-              data.cfg.noOfConcurrentWorker
-            )(ctx.system, ctx.executionContext)
-          ) {
-            case Failure(exception) =>
-              PersistenceFailed(exception)
-            case Success(noOfPersistedEntries) =>
-              Persisted(noOfPersistedEntries)
-          }
+
+          persistEntries(
+            data.existingTags,
+            data.workerPool,
+            data.cfg.noOfConcurrentWorker
+          )(ctx)
           tagging(data.retry, ctx, msgBuffer)
         } else {
           logger.warn("Max no of retries reached. Going back to idle!")
@@ -320,22 +286,33 @@ object Supervisor extends LazyLogging {
       noOfWorkers: Int
   )(
       implicit
-      system: ActorSystem[Nothing],
-      executionContextExecutor: ExecutionContextExecutor,
+      ctx: ActorContext[TaggerSupervisorEvent],
       timeout: Timeout = 5 seconds
-  ): Future[Vector[Tag]] = {
-    Future
-      .sequence(
-        (0 until noOfWorkers)
-          .foldLeft((0, Vector.empty[Future[TagEntriesResponse]])) {
-            case ((skip, requests), _) =>
-              val ask =
-                workerPool.ask(replyTo => Tagger.TagEntries(skip, replyTo))
-              (skip + batchSize, requests :+ ask)
-          }
-          ._2
-      )
-      .map(_.flatMap(_.tags))
+  ): Unit = {
+    implicit val system: ActorSystem[Nothing] = ctx.system
+    implicit val executionContextExecutor: ExecutionContextExecutor =
+      ctx.executionContext
+
+    ctx.pipeToSelf(
+      Future
+        .sequence(
+          (0 until noOfWorkers)
+            .foldLeft((0, Vector.empty[Future[TagEntriesResponse]])) {
+              case ((skip, requests), _) =>
+                val ask =
+                  workerPool.ask(replyTo => Tagger.TagEntries(skip, replyTo))
+                (skip + batchSize, requests :+ ask)
+            }
+            ._2
+        )
+        .map(_.flatMap(_.tags))
+    ) {
+      case Failure(exception) =>
+        TaggingFailed(exception)
+      case Success(tags) =>
+        Tags(tags.toSet)
+    }
+
   }
 
   private def persistEntries(
@@ -343,17 +320,28 @@ object Supervisor extends LazyLogging {
       workerPool: ActorRef[TaggerEvent],
       noOfWorkers: Int
   )(
-      implicit system: ActorSystem[Nothing],
-      executionContextExecutor: ExecutionContextExecutor,
+      implicit
+      ctx: ActorContext[TaggerSupervisorEvent],
       timeout: Timeout = 5 seconds
-  ): Future[Int] = {
-    Future
-      .sequence(
-        (0 until noOfWorkers) map (_ => {
-          workerPool.ask(replyTo => Tagger.PersistEntries(allTags, replyTo))
-        })
-      )
-      .map(_.map(_.entries).sum)
+  ): Unit = {
+    implicit val system: ActorSystem[Nothing] = ctx.system
+    implicit val executionContextExecutor: ExecutionContextExecutor =
+      ctx.executionContext
+
+    ctx.pipeToSelf(
+      Future
+        .sequence(
+          (0 until noOfWorkers) map (_ => {
+            workerPool.ask(replyTo => Tagger.PersistEntries(allTags, replyTo))
+          })
+        )
+        .map(_.map(_.entries).sum)
+    ) {
+      case Failure(exception) =>
+        PersistenceFailed(exception)
+      case Success(noOfPersistedEntries) =>
+        Persisted(noOfPersistedEntries)
+    }
   }
 
   private def processPersisted(
