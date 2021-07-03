@@ -288,7 +288,7 @@ object Supervisor extends LazyLogging {
   )(
       implicit
       ctx: ActorContext[TaggerSupervisorEvent],
-      timeout: Timeout = 5 seconds
+      timeout: Timeout = 10 seconds
   ): Unit = {
     implicit val system: ActorSystem[Nothing] = ctx.system
     implicit val executionContextExecutor: ExecutionContextExecutor =
@@ -323,7 +323,7 @@ object Supervisor extends LazyLogging {
   )(
       implicit
       ctx: ActorContext[TaggerSupervisorEvent],
-      timeout: Timeout = 5 seconds
+      timeout: Timeout = 10 seconds
   ): Unit = {
     implicit val system: ActorSystem[Nothing] = ctx.system
     implicit val executionContextExecutor: ExecutionContextExecutor =
