@@ -332,11 +332,21 @@ object Supervisor extends LazyLogging {
     ctx.pipeToSelf(
       Future
         .sequence(
-          (0 until noOfWorkers) map (_ => {
-            workerPool.ask(replyTo => Tagger.PersistEntries(allTags, replyTo))
-          })
+          (0 until noOfWorkers)
+            .map(_ => {
+              workerPool.ask(replyTo => Tagger.PersistEntries(allTags, replyTo))
+            })
+            .map(_.transform(Success(_)))
         )
-        .map(_.map(_.entries).sum)
+        .map { tries =>
+          val (failures, successes) = tries.partitionMap(_.toEither)
+          failures.headOption match {
+            case Some(exception: Throwable) =>
+              throw exception
+            case None =>
+              successes.map(_.entries).sum
+          }
+        }
     ) {
       case Failure(exception) =>
         PersistenceFailed(exception)
