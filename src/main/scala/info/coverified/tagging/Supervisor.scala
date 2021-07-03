@@ -80,7 +80,7 @@ object Supervisor extends LazyLogging {
       )
   }
 
-  private final val SHUTDOWN_TIMEOUT = 10 seconds
+  private final val SHUTDOWN_TIMEOUT = 30 seconds
   private final val MAX_RETRY_NO = 5
 
   def apply(): Behavior[TaggerSupervisorEvent] = uninitialized()

@@ -93,7 +93,7 @@ object AiConnector {
       val dummyTags: Set[String] =
         (0 until random.nextInt(dummyData.size)).map(dummyData(_)).toSet
 
-      logger.info(s"DummyAiConnector queried tags: $dummyTags")
+      logger.debug(s"DummyAiConnector queried tags: $dummyTags")
 
       dummyTags
 
