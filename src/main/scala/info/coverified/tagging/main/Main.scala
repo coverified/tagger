@@ -24,6 +24,7 @@ object Main extends LazyLogging {
         logger.error("Parsing config failed.", exception)
         System.exit(1)
       case Success(cfg) =>
+        logger.info(s"Starting tagger with config: $cfg")
         val system: ActorSystem[Supervisor.TaggerSupervisorEvent] =
           ActorSystem(Supervisor(), "Tagger")
         system ! Supervisor.Init(
