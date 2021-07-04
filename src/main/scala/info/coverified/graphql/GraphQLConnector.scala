@@ -24,6 +24,7 @@ import info.coverified.graphql.schema.CoVerifiedClientSchema.{
   Url,
   _QueryMeta
 }
+import io.sentry.Sentry
 import org.asynchttpclient.DefaultAsyncHttpClient
 import sttp.capabilities.zio.ZioStreams
 import sttp.client3.SttpBackend
@@ -120,13 +121,15 @@ object GraphQLConnector {
               logger.error(
                 "Cannot send tag mutation request to API! Exception:",
                 ex
-              ) // todo sentry integration
+              )
+              Sentry.captureException(ex)
               ZIO.succeed(Set.empty[Tag.TagView[Language.LanguageView]])
             },
             suc =>
               ZIO.succeed(
                 suc.body match {
-                  case Left(err) => // todo sentry integration
+                  case Left(err) =>
+                    Sentry.captureException(err)
                     logger.error(
                       "Error returned from API during tag mutation execution! Exception:",
                       err
@@ -297,7 +300,8 @@ object GraphQLConnector {
           .send(backend)
           .foldM(
             ex => {
-              logger.error("Cannot query entries! Exception:", ex) // todo sentry integration
+              logger.error("Cannot query entries! Exception:", ex)
+              Sentry.captureException(ex)
               ZIO.succeed(Set.empty[EntryView])
             },
             suc =>
@@ -308,7 +312,8 @@ object GraphQLConnector {
                       logger.error(
                         "API returned error on entity query: ",
                         error
-                      ) // todo sentry integration
+                      )
+                      Sentry.captureException(error)
                       Set.empty[EntryView]
                     case Right(entries) =>
                       entries.map(_.toSet).getOrElse(Set.empty)
@@ -333,13 +338,15 @@ object GraphQLConnector {
               logger.error(
                 "Cannot send entry tag update request to API! Exception:",
                 ex
-              ) // todo sentry integration
+              )
+              Sentry.captureException(ex)
               ZIO.succeed(None)
             },
             suc =>
               ZIO.succeed(
                 suc.body match {
-                  case Left(err) => // todo sentry integration
+                  case Left(err) =>
+                    Sentry.captureException(err)
                     logger.error(
                       "Error returned from API during entry update with tags mutation execution! Exception:",
                       err
@@ -373,13 +380,15 @@ object GraphQLConnector {
               logger.error(
                 "Cannot send entry tag update request to API! Exception:",
                 ex
-              ) // todo sentry integration
+              )
+              Sentry.captureException(ex)
               ZIO.succeed(None)
             },
             suc =>
               ZIO.succeed(
                 suc.body match {
-                  case Left(err) => // todo sentry integration
+                  case Left(err) =>
+                    Sentry.captureException(err)
                     logger.error(
                       "Error returned from API during entry update with tags mutation execution! Exception:",
                       err
@@ -399,12 +408,10 @@ object GraphQLConnector {
       with LazyLogging {
 
     // todo JH remove
-    def queryEntries(skip: Int, first: Int): Set[EntryView] = {
-
+    def queryEntries(skip: Int, first: Int): Set[EntryView] =
       throw new RuntimeException(
         s"Query Entries is not implemented in ${getClass.getSimpleName}!"
       )
-    }
 
     def updateEntryWithTags(
         entryUuid: String,

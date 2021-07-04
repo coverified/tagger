@@ -23,6 +23,7 @@ import info.coverified.tagging.Tagger.{
 import info.coverified.tagging.ai.AiConnector.DummyTaggerAiConnector
 import info.coverified.tagging.main.Config
 import akka.actor.typed.scaladsl.AskPattern._
+import io.sentry.Sentry
 
 import java.util.Date
 import scala.concurrent.{ExecutionContextExecutor, Future}
@@ -203,7 +204,8 @@ object Supervisor extends LazyLogging {
 
       case TaggingFailed(exception) =>
         // TagEntries(...) cmd failed
-        logger.error("Tagging failed with exception: ", exception) // todo sentry integration
+        logger.error("Tagging failed with exception: ", exception)
+        Sentry.captureException(exception)
         if (data.retries < MAX_RETRY_NO) {
           logger.info(s"Retrying ... (current retry no: ${data.retries})")
           startTagging(
@@ -258,7 +260,8 @@ object Supervisor extends LazyLogging {
       case PersistenceFailed(exception) =>
         // Persisted(...) cmd failed
         // a potential retry must be done here
-        logger.error("Persisting failed with exception: ", exception) // todo sentry integration
+        logger.error("Persisting failed with exception: ", exception)
+        Sentry.captureException(exception)
         if (data.retries < MAX_RETRY_NO) {
           logger.info(s"Retrying ... (current retry no: ${data.retries})")
 
