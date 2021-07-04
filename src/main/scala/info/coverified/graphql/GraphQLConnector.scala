@@ -7,6 +7,7 @@ package info.coverified.graphql
 
 import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.schema.CoVerifiedClientSchema.{
+  EntriesUpdateInput,
   Entry,
   EntryUpdateInput,
   EntryWhereInput,
@@ -43,6 +44,8 @@ object GraphQLConnector {
   type EntryView = Entry.EntryView[Url.UrlView[Source.SourceView], Tag.TagView[
     Language.LanguageView
   ], _QueryMeta._QueryMetaView, Language.LanguageView]
+
+  type EntryIdWithTagIds = (String, Set[String])
 
   sealed trait SupervisorGraphQLConnector extends GraphQLConnector {
 
@@ -177,6 +180,10 @@ object GraphQLConnector {
         tagUuids: Set[String]
     ): Option[EntryView]
 
+    def updateEntriesWithTags(
+        entryUuids: Vector[EntryIdWithTagIds]
+    ): Option[Vector[EntryView]]
+
     def close(): Unit
   }
 
@@ -213,6 +220,42 @@ object GraphQLConnector {
           where = filter,
           first = Some(first),
           skip = skip
+        )(fullEntryViewInnerSelection)
+
+    private val updateEntriesWithTagsMutation =
+      (entries: Vector[EntryIdWithTagIds]) =>
+        Mutation.updateEntries(
+          Some(
+            entries.map {
+              case (entryId, tagIds) =>
+                Some(
+                  EntriesUpdateInput(
+                    entryId,
+                    Some(
+                      EntryUpdateInput(
+                        hasBeenTagged = Some(true),
+                        tags = Some(
+                          TagRelateToManyInput(
+                            connect = Some(
+                              tagIds
+                                .map(
+                                  tagid =>
+                                    Some(
+                                      TagWhereUniqueInput(
+                                        Some(tagid)
+                                      )
+                                    )
+                                )
+                                .toList
+                            )
+                          )
+                        )
+                      )
+                    )
+                  )
+                )
+            }.toList
+          )
         )(fullEntryViewInnerSelection)
 
     private val updateEntryWithTagsMutation =
@@ -316,6 +359,39 @@ object GraphQLConnector {
       logger.info("Trying to close graphQL connection backend ...")
       backend.close()
     }
+
+    override def updateEntriesWithTags(
+        entryUuids: Vector[(String, Set[String])]
+    ): Option[Vector[EntryView]] = {
+      runtime.unsafeRun(
+        updateEntriesWithTagsMutation(entryUuids)
+          .toRequest(apiUrl)
+          .header("x-coverified-internal-auth", authSecret)
+          .send(backend)
+          .foldM(
+            ex => {
+              logger.error(
+                "Cannot send entry tag update request to API! Exception:",
+                ex
+              ) // todo sentry integration
+              ZIO.succeed(None)
+            },
+            suc =>
+              ZIO.succeed(
+                suc.body match {
+                  case Left(err) => // todo sentry integration
+                    logger.error(
+                      "Error returned from API during entry update with tags mutation execution! Exception:",
+                      err
+                    )
+                    None
+                  case Right(mutatedEntry) =>
+                    mutatedEntry.map(_.flatten.toVector)
+                }
+              )
+          )
+      )
+    }
   }
 
   final case class DummyTaggerGraphQLConnector()
@@ -336,13 +412,20 @@ object GraphQLConnector {
     ): Option[EntryView] = {
 
       throw new RuntimeException(
-        s"Update entries is not implemented in ${getClass.getSimpleName}!"
+        s"Update entry is not implemented in ${getClass.getSimpleName}!"
       )
     }
 
     override val authSecret: String = "NO_AUTH_REQUIRED"
 
     override def close(): Unit = {}
+
+    override def updateEntriesWithTags(
+        entryUuids: Vector[(String, Set[String])]
+    ): Option[Vector[EntryView]] =
+      throw new RuntimeException(
+        s"Update entries is not implemented in ${getClass.getSimpleName}!"
+      )
   }
 
 }

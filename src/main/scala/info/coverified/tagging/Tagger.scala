@@ -9,10 +9,13 @@ import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior}
 import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.GraphQLConnector.{
+  EntryIdWithTagIds,
   EntryView,
+  EntryWithTags,
   TagView,
   TaggerGraphQLConnector
 }
+import info.coverified.tagging.Tagger_old.EntryWithTags
 import info.coverified.tagging.ai.AiConnector
 
 object Tagger extends LazyLogging {
@@ -66,11 +69,12 @@ object Tagger extends LazyLogging {
           .toMap
 
         val startPersisting = System.currentTimeMillis()
-        data.currentTaggingResults.foreach {
-          case (tags, entry) =>
-            val tagUuids = tags.flatMap(tagMap.get)
-            data.graphQL.updateEntryWithTags(entry.id, tagUuids)
-        }
+        val tagIdsToEntry: Vector[EntryIdWithTagIds] =
+          data.currentTaggingResults.map {
+            case (tags, entry) => (entry.id, tags.flatMap(tagMap.get))
+          }
+        data.graphQL.updateEntriesWithTags(tagIdsToEntry)
+
         val persistingDuration = System.currentTimeMillis() - startPersisting
         logger.info(s"Persisting duration: $persistingDuration ms")
 
