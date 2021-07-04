@@ -11,7 +11,6 @@ import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.GraphQLConnector.{
   EntryIdWithTagIds,
   EntryView,
-  EntryWithTags,
   TagView,
   TaggerGraphQLConnector
 }
