@@ -65,11 +65,14 @@ object Tagger extends LazyLogging {
           .flatMap(tagView => tagView.name.map(name => name -> tagView.id))
           .toMap
 
+        val startPersisting = System.currentTimeMillis()
         data.currentTaggingResults.foreach {
           case (tags, entry) =>
             val tagUuids = tags.flatMap(tagMap.get)
             data.graphQL.updateEntryWithTags(entry.id, tagUuids)
         }
+        val persistingDuration = System.currentTimeMillis() - startPersisting
+        logger.info(s"Persisting duration: $persistingDuration ms")
 
         replyTo ! PersistEntriesResponse(data.currentTaggingResults.size)
 

@@ -10,7 +10,6 @@ import akka.actor.typed.scaladsl.{ActorContext, Behaviors, Routers, StashBuffer}
 import akka.util.Timeout
 import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.GraphQLConnector.{
-  DummyTaggerGraphQLConnector,
   SupervisorGraphQLConnector,
   TagView,
   ZIOTaggerGraphQLConnector
