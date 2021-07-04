@@ -50,7 +50,7 @@ dependencies {
 	implementation 'com.github.coverified:graphQLConnector:0b3824a'
 
 	// sentry logging
-	implementation 'io.sentry:sentry-log4j2:4.3.0'
+	implementation 'io.sentry:sentry-log4j2:5.0.1'
 
 	// CORE akka //
 	implementation platform("com.typesafe.akka:akka-bom_${scalaVersion}:2.6.15")
