@@ -15,7 +15,6 @@ import info.coverified.graphql.GraphQLConnector.{
   TagView,
   TaggerGraphQLConnector
 }
-import info.coverified.tagging.Tagger_old.EntryWithTags
 import info.coverified.tagging.ai.AiConnector
 
 object Tagger extends LazyLogging {
