@@ -5,18 +5,65 @@
 
 package info.coverified.tagging.ai
 
-import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.GraphQLConnector.EntryView
-import scala.util.Random
+import com.typesafe.scalalogging.LazyLogging
+import net.liftweb.json.DefaultFormats
+import net.liftweb.json.Serialization.write
+import scalaj.http.{Http, HttpOptions}
+import io.circe.generic.auto._
+import io.circe.parser._
+import io.sentry.Sentry
+
+import scala.util.{Failure, Success}
+import scala.util.{Random, Try}
 
 trait AiConnector {
-  def queryTags(entry: EntryView): Set[String]
+  def queryTags(entry: EntryView): Option[Set[String]]
 }
 
 object AiConnector {
 
-  final case class TaggerAiConnector() extends AiConnector {
-    override def queryTags(entry: EntryView): Set[String] = ??? // todo JH
+  private final case class CategoryRequest(request: String)
+
+  private final case class TagResponse(tags: Vector[String])
+
+  final case class TaggerAiConnector(aiApiUri: String)
+      extends AiConnector
+      with LazyLogging {
+
+    override def queryTags(entry: EntryView): Option[Set[String]] =
+      entry.content.flatMap(
+        entryContent =>
+          Try {
+            Http(aiApiUri)
+              .postData(buildPayload(cleanString(entryContent)))
+              .header("Content-Type", "application/json")
+              .header("Charset", "UTF-8")
+              .option(HttpOptions.readTimeout(10000))
+              .asString
+              .body
+          } match {
+            case Failure(exception) =>
+              logger.error("Error during ai api call!", exception)
+              Sentry.captureException(exception)
+              None
+            case Success(jsonString) =>
+              decode[TagResponse](jsonString) match {
+                case Left(error) =>
+                  logger.error("Exception during ai result processing!", error)
+                  Sentry.captureException(error)
+                  None
+                case Right(tagResponse) =>
+                  Some(tagResponse.tags.toSet)
+              }
+          }
+      )
+
+    private def cleanString(inputString: String) =
+      inputString.replace("\"", "").replace("“", " ")
+
+    private def buildPayload(requestString: String): String =
+      write(CategoryRequest(requestString))(DefaultFormats)
   }
 
   final case class DummyTaggerAiConnector()
@@ -88,15 +135,14 @@ object AiConnector {
       "Wissenschaft und Technik"
     )
 
-    override def queryTags(dummyEntry: EntryView): Set[String] = {
+    override def queryTags(dummyEntry: EntryView): Option[Set[String]] = {
 
       val dummyTags: Set[String] =
         (0 until random.nextInt(dummyData.size)).map(dummyData(_)).toSet
 
       logger.debug(s"DummyAiConnector queried tags: $dummyTags")
 
-      dummyTags
-
+      Some(dummyTags)
     }
   }
 

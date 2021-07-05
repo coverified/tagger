@@ -20,7 +20,7 @@ import info.coverified.tagging.Tagger.{
   TaggerData,
   TaggerEvent
 }
-import info.coverified.tagging.ai.AiConnector.DummyTaggerAiConnector
+import info.coverified.tagging.ai.AiConnector.TaggerAiConnector
 import info.coverified.tagging.main.Config
 import akka.actor.typed.scaladsl.AskPattern._
 import io.sentry.Sentry
@@ -103,7 +103,7 @@ object Supervisor extends LazyLogging {
                 Tagger(
                   TaggerData(
                     cfg.batchSize,
-                    DummyTaggerAiConnector(),
+                    TaggerAiConnector(cfg.kiApi.toString()),
                     ZIOTaggerGraphQLConnector(cfg.graphQLApi, cfg.authSecret)
                   )
                 )
