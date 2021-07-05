@@ -16,7 +16,8 @@ final case class Config(
     graphQLApi: Uri,
     authSecret: String,
     kiApi: Uri,
-    internalScheduleInterval: Long = -1
+    internalScheduleInterval: Long = -1,
+    batchDelay: Option[Int]
 )
 
 object Config extends LazyLogging {
@@ -27,6 +28,7 @@ object Config extends LazyLogging {
   private val AUTH_SECRET = "AUTH_SECRET"
   private val KI_API_URL = "KI_API_URL"
   private val INTERNAL_SCHEDULER_INTERVAL = "INTERNAL_SCHEDULER_INTERVAL"
+  private val BATCH_DELAY = "BATCH_DELAY"
 
   // all time values in milliseconds
   private val defaultParams: Map[String, String] = Map(
@@ -35,7 +37,8 @@ object Config extends LazyLogging {
     GRAPHQL_API_URL -> "",
     AUTH_SECRET -> "",
     KI_API_URL -> "",
-    INTERNAL_SCHEDULER_INTERVAL -> "-1"
+    INTERNAL_SCHEDULER_INTERVAL -> "-1",
+    BATCH_DELAY -> ""
   )
 
   private val envParams: Map[String, String] =
@@ -88,7 +91,8 @@ object Config extends LazyLogging {
         Uri.unsafeParse(envParams(GRAPHQL_API_URL)),
         envParams(AUTH_SECRET),
         Uri.unsafeParse(envParams(KI_API_URL)),
-        envParams(INTERNAL_SCHEDULER_INTERVAL).toLong
+        envParams(INTERNAL_SCHEDULER_INTERVAL).toLong,
+        envParams(BATCH_DELAY).toIntOption
       )
     }
   }

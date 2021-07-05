@@ -55,6 +55,8 @@ object Supervisor extends LazyLogging {
 
   private final case object IdleTimeout extends TaggerSupervisorEvent
 
+  private final case object DelayedTagging extends TaggerSupervisorEvent
+
   // data
   private final case class TaggerSupervisorData(
       cfg: Config, // todo cfg replace with interfaces for easier testing
@@ -176,7 +178,7 @@ object Supervisor extends LazyLogging {
       data: TaggerSupervisorData,
       ctx: ActorContext[TaggerSupervisorEvent],
       msgBuffer: StashBuffer[TaggerSupervisorEvent]
-  )(implicit timeout: Timeout = 5 seconds): Behavior[TaggerSupervisorEvent] =
+  ): Behavior[TaggerSupervisorEvent] =
     Behaviors.receiveMessage {
       case StartTagging =>
         logger.info(
@@ -228,15 +230,25 @@ object Supervisor extends LazyLogging {
         ) match {
           case (updatedData, allEntriesTagged) if !allEntriesTagged =>
             // not done yet, start next tagging round
-            logger.info(
-              s"Processed ${updatedData.processedEntries} entries so far, but there are still some left. " +
-                s"Starting next tagging round ..."
-            )
-            startTagging(
-              data.workerPool,
-              data.cfg.batchSize,
-              data.cfg.noOfConcurrentWorker
-            )(ctx)
+            data.cfg.batchDelay match {
+              case Some(batchDelay) =>
+                logger.info(
+                  s"Processed ${updatedData.processedEntries} entries so far, but there are still some left. " +
+                    s"Next batch tagging round is delayed by $batchDelay millis. Stay calm."
+                )
+                ctx.scheduleOnce(batchDelay millis, ctx.self, DelayedTagging)
+              case None =>
+                logger.info(
+                  s"Processed ${updatedData.processedEntries} entries so far, but there are still some left. " +
+                    s"Starting next tagging round ..."
+                )
+                startTagging(
+                  data.workerPool,
+                  data.cfg.batchSize,
+                  data.cfg.noOfConcurrentWorker
+                )(ctx)
+            }
+
             tagging(updatedData, ctx, msgBuffer)
 
           case (updatedData, _) =>
@@ -256,6 +268,15 @@ object Supervisor extends LazyLogging {
 
             msgBuffer.unstashAll(idle(updatedData.clean, msgBuffer))
         }
+
+      case DelayedTagging =>
+        logger.info("Starting next tagging round ...")
+        startTagging(
+          data.workerPool,
+          data.cfg.batchSize,
+          data.cfg.noOfConcurrentWorker
+        )(ctx)
+        tagging(data, ctx, msgBuffer)
 
       case PersistenceFailed(exception) =>
         // Persisted(...) cmd failed
@@ -290,7 +311,7 @@ object Supervisor extends LazyLogging {
   )(
       implicit
       ctx: ActorContext[TaggerSupervisorEvent],
-      timeout: Timeout = 10 seconds
+      timeout: Timeout = 60 seconds
   ): Unit = {
     implicit val system: ActorSystem[Nothing] = ctx.system
     implicit val executionContextExecutor: ExecutionContextExecutor =
@@ -325,7 +346,7 @@ object Supervisor extends LazyLogging {
   )(
       implicit
       ctx: ActorContext[TaggerSupervisorEvent],
-      timeout: Timeout = 10 seconds
+      timeout: Timeout = 60 seconds
   ): Unit = {
     implicit val system: ActorSystem[Nothing] = ctx.system
     implicit val executionContextExecutor: ExecutionContextExecutor =
