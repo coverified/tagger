@@ -95,8 +95,12 @@ object Supervisor extends LazyLogging {
           // todo scheduler
 
           // idle timeout to shutdown after some time
-          if (cfg.internalScheduleInterval == -1)
-            ctx.setReceiveTimeout(SHUTDOWN_TIMEOUT, IdleTimeout)
+          if (cfg.internalScheduleInterval == -1) {
+            val overallTimeout = cfg.batchDelay
+              .map(_.millis + SHUTDOWN_TIMEOUT)
+              .getOrElse(SHUTDOWN_TIMEOUT)
+            ctx.setReceiveTimeout(overallTimeout, IdleTimeout)
+          }
 
           // spawn router pool
           val workerPool = ctx.spawn(
