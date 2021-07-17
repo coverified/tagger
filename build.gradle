@@ -106,4 +106,5 @@ shadowJar {
 		resource = 'reference.conf'
 	}
 	with jar
+	zip64 = true
 }
