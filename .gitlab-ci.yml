@@ -56,3 +56,4 @@ buildDockerImage:
         - build4dockerImage
     only:
         - main
+    cache: {}
