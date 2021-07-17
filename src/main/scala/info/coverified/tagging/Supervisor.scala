@@ -16,13 +16,14 @@ import info.coverified.graphql.GraphQLConnector.{
 }
 import info.coverified.tagging.Tagger.{
   GracefulShutdown,
-  TagEntriesResponse,
+  HandleEntriesResponse,
   TaggerData,
   TaggerEvent
 }
 import info.coverified.tagging.ai.AiConnector.TaggerAiConnector
 import info.coverified.tagging.main.Config
 import akka.actor.typed.scaladsl.AskPattern._
+import info.coverified.graphql.schema.CoVerifiedClientSchema.Language.LanguageView
 import io.sentry.Sentry
 
 import java.util.Date
@@ -42,8 +43,10 @@ object Supervisor extends LazyLogging {
   final case object StartTagging extends TaggerSupervisorEvent
 
   private type Tag = String
+  private type Language = String
 
-  private final case class Tags(tags: Set[Tag]) extends TaggerSupervisorEvent
+  private final case class EntryMeta(tags: Set[Tag], languages: Set[Language])
+      extends TaggerSupervisorEvent
 
   private final case class TaggingFailed(exception: Throwable)
       extends TaggerSupervisorEvent
@@ -63,9 +66,10 @@ object Supervisor extends LazyLogging {
       graphQL: SupervisorGraphQLConnector,
       workerPool: ActorRef[TaggerEvent],
       existingTags: Set[TagView],
+      existingLanguages: Set[LanguageView],
       taggingStartDate: Long = System.currentTimeMillis(),
       globalStartDate: Long = System.currentTimeMillis(),
-      tagStore: Vector[Tags] = Vector.empty,
+      entryMetaStore: Vector[EntryMeta] = Vector.empty,
       processedEntries: Long = 0,
       retries: Int = 0
   ) {
@@ -125,6 +129,11 @@ object Supervisor extends LazyLogging {
           val existingTags = graphQLConnector.queryAllExistingTags
           logger.info(s"Found ${existingTags.size} tags in database.")
 
+          // query existing languages
+          logger.info("Querying existing languages ...")
+          val existingLanguages = graphQLConnector.queryAllExistingLanguages
+          logger.info(s"Found ${existingLanguages.size} languages in database.")
+
           logger.info("Initialization complete!")
           msgBuffer.unstashAll(
             idle(
@@ -132,7 +141,8 @@ object Supervisor extends LazyLogging {
                 cfg,
                 graphQLConnector,
                 workerPool,
-                existingTags
+                existingTags,
+                existingLanguages
               ),
               msgBuffer
             )
@@ -190,19 +200,19 @@ object Supervisor extends LazyLogging {
         )
         msgBuffer.stash(StartTagging)
         Behaviors.same
-      case tagData: Tags =>
-        // all replies received; mutate tags + let worker persist entities
-        val newTags = tagData.tags.filterNot(data.existingTags.flatMap(_.name))
-        val updatedData = if (newTags.nonEmpty) {
-          logger.info(s"Mutating ${newTags.size} new tags ...")
-          val newTagViews: Set[TagView] = data.graphQL.mutateTags(newTags)
-          val allTags = newTagViews ++ data.existingTags
-          logger.info(s"Mutation done. Overall tag no: ${allTags.size}")
-          data.copy(existingTags = allTags)
-        } else data
+      case entryMeta: EntryMeta =>
+        // all replies received; mutate tags + languages + let worker persist entities
+        val newTags =
+          entryMeta.tags.filterNot(data.existingTags.flatMap(_.name))
+        val newLanguages =
+          entryMeta.languages.filterNot(data.existingLanguages.flatMap(_.name))
+
+        val updatedData =
+          handleNewLanguages(handleNewTags(data, newTags), newLanguages)
 
         persistEntries(
           updatedData.existingTags,
+          updatedData.existingLanguages,
           updatedData.workerPool,
           updatedData.cfg.noOfConcurrentWorker
         )(ctx)
@@ -292,6 +302,7 @@ object Supervisor extends LazyLogging {
 
           persistEntries(
             data.existingTags,
+            data.existingLanguages,
             data.workerPool,
             data.cfg.noOfConcurrentWorker
           )(ctx)
@@ -325,26 +336,29 @@ object Supervisor extends LazyLogging {
       Future
         .sequence(
           (0 until noOfWorkers)
-            .foldLeft((0, Vector.empty[Future[TagEntriesResponse]])) {
+            .foldLeft((0, Vector.empty[Future[HandleEntriesResponse]])) {
               case ((skip, requests), _) =>
                 val ask =
-                  workerPool.ask(replyTo => Tagger.TagEntries(skip, replyTo))
+                  workerPool.ask(replyTo => Tagger.HandleEntries(skip, replyTo))
                 (skip + batchSize, requests :+ ask)
             }
             ._2
         )
-        .map(_.flatMap(_.tags))
     ) {
       case Failure(exception) =>
         TaggingFailed(exception)
-      case Success(tags) =>
-        Tags(tags.toSet)
+      case Success(handlingResponses) =>
+        EntryMeta(
+          handlingResponses.flatMap(_.tags).toSet,
+          handlingResponses.flatMap(_.languages).toSet
+        )
     }
 
   }
 
   private def persistEntries(
       allTags: Set[TagView],
+      allLanguages: Set[LanguageView],
       workerPool: ActorRef[TaggerEvent],
       noOfWorkers: Int
   )(
@@ -361,7 +375,9 @@ object Supervisor extends LazyLogging {
         .sequence(
           (0 until noOfWorkers)
             .map(_ => {
-              workerPool.ask(replyTo => Tagger.PersistEntries(allTags, replyTo))
+              workerPool.ask(
+                replyTo => Tagger.PersistEntries(allTags, allLanguages, replyTo)
+              )
             })
             .map(_.transform(Success(_)))
         )
@@ -396,6 +412,31 @@ object Supervisor extends LazyLogging {
       allEntriesPersisted
     )
   }
+
+  private def handleNewTags(
+      data: TaggerSupervisorData,
+      newTags: Set[Tag]
+  ): TaggerSupervisorData =
+    if (newTags.nonEmpty) {
+      logger.info(s"Mutating ${newTags.size} new tags ...")
+      val newTagViews: Set[TagView] = data.graphQL.mutateTags(newTags)
+      val allTags = newTagViews ++ data.existingTags
+      logger.info(s"Mutation done. Overall tag no: ${allTags.size}")
+      data.copy(existingTags = allTags)
+    } else data
+
+  private def handleNewLanguages(
+      data: TaggerSupervisorData,
+      newLanguages: Set[Language]
+  ): TaggerSupervisorData =
+    if (newLanguages.nonEmpty) {
+      logger.info(s"Mutating ${newLanguages.size} new languages ...")
+      val newLanguageViews: Set[LanguageView] =
+        data.graphQL.mutateLanguages(newLanguages)
+      val allLanguages = newLanguageViews ++ data.existingLanguages
+      logger.info(s"Mutation done. Overall language no: ${allLanguages.size}")
+      data.copy(existingLanguages = allLanguages)
+    } else data
 
   private def shutdown(
       data: TaggerSupervisorData,

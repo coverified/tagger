@@ -7,26 +7,45 @@ package info.coverified.tagging
 
 import akka.actor.typed.scaladsl.Behaviors
 import akka.actor.typed.{ActorRef, Behavior}
+import com.github.pemistahl.lingua.api.{
+  Language,
+  LanguageDetector,
+  LanguageDetectorBuilder
+}
 import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.GraphQLConnector.{
-  EntryIdWithTagIds,
   EntryView,
   TagView,
   TaggerGraphQLConnector
 }
+import info.coverified.graphql.schema.CoVerifiedClientSchema.{
+  EntriesUpdateInput,
+  EntryUpdateInput,
+  LanguageRelateToOneInput,
+  LanguageWhereUniqueInput,
+  TagRelateToManyInput,
+  TagWhereUniqueInput
+}
+import info.coverified.graphql.schema.CoVerifiedClientSchema.Language.LanguageView
 import info.coverified.tagging.ai.AiConnector
 
 object Tagger extends LazyLogging {
 
   sealed trait TaggerEvent
 
-  final case class TagEntries(skip: Int, replyTo: ActorRef[TagEntriesResponse])
-      extends TaggerEvent
+  final case class HandleEntries(
+      skip: Int,
+      replyTo: ActorRef[HandleEntriesResponse]
+  ) extends TaggerEvent
 
-  final case class TagEntriesResponse(tags: Set[String])
+  final case class HandleEntriesResponse(
+      tags: Set[String],
+      languages: Set[String]
+  )
 
   final case class PersistEntries(
       tags: Set[TagView],
+      languages: Set[LanguageView],
       replyTo: ActorRef[PersistEntriesResponse]
   ) extends TaggerEvent
 
@@ -34,59 +53,132 @@ object Tagger extends LazyLogging {
 
   final case object GracefulShutdown extends TaggerEvent
 
-  private type TaggingResult = (Set[String], EntryView)
+  final case class HandlingResult(
+      entry: EntryView,
+      tags: Set[String],
+      language: Option[String]
+  )
 
   final case class TaggerData(
       batchSize: Int,
       ai: AiConnector,
       graphQL: TaggerGraphQLConnector,
-      currentTaggingResults: Vector[TaggingResult] = Vector.empty
+      currentHandlingResults: Vector[HandlingResult] = Vector.empty,
+      detector: LanguageDetector = LanguageDetectorBuilder
+        .fromAllLanguages()
+        .build()
   )
 
   def apply(data: TaggerData): Behavior[TaggerEvent] =
     Behaviors.receiveMessage {
-      case TagEntries(skip, replyTo) =>
+      case HandleEntries(skip, replyTo) =>
         // query entities from db
         val entities: Vector[EntryView] =
           data.graphQL.queryEntries(skip, data.batchSize).toVector
 
         // request tags from ai
         // ignores entities no tags can be found for!
-        val taggingResult: Vector[(Set[String], EntryView)] =
-          entities.flatMap(
-            entity => (data.ai.queryTags(entity).map(tags => (tags, entity)))
+        val handlingResult: Vector[HandlingResult] =
+          entities.map(
+            entry => {
+              val tags = data.ai.queryTags(entry).getOrElse(Set.empty)
+              val language =
+                entry.content.flatMap(data.detector.detectLanguageOf(_) match {
+                  case Language.UNKNOWN =>
+                    None
+                  case validLang =>
+                    Some(validLang.getIsoCode639_1.toString)
+                })
+              HandlingResult(entry, tags, language)
+            }
           )
 
-        val updatedData = data.copy(currentTaggingResults = taggingResult)
+        val updatedData = data.copy(currentHandlingResults = handlingResult)
 
-        replyTo ! TagEntriesResponse(taggingResult.flatMap(_._1).toSet)
+        replyTo ! HandleEntriesResponse(
+          handlingResult.flatMap(_.tags).toSet,
+          handlingResult.flatMap(_.language).toSet
+        )
 
         apply(updatedData)
 
-      case PersistEntries(tags, replyTo) =>
+      case PersistEntries(tags, languages, replyTo) =>
         // mutate entries
         val tagMap = tags
           .flatMap(tagView => tagView.name.map(name => name -> tagView.id))
           .toMap
+        val languageMap = languages
+          .flatMap(
+            languageView =>
+              languageView.name.map(name => name -> languageView.id)
+          )
+          .toMap
 
         val startPersisting = System.currentTimeMillis()
-        val tagIdsToEntry: Vector[EntryIdWithTagIds] =
-          data.currentTaggingResults.map {
-            case (tags, entry) => (entry.id, tags.flatMap(tagMap.get))
-          }
-        data.graphQL.updateEntriesWithTags(tagIdsToEntry)
+
+        val entryUpdates = data.currentHandlingResults.map(handlingResult => {
+          updateEntryMutatione(
+            handlingResult.entry,
+            handlingResult.language.flatMap(languageMap.get),
+            handlingResult.tags.flatMap(tagMap.get)
+          )
+
+        })
+
+        data.graphQL.updateEntriesWithTags(entryUpdates)
 
         val persistingDuration = System.currentTimeMillis() - startPersisting
         logger.info(s"Persisting duration: $persistingDuration ms")
 
-        replyTo ! PersistEntriesResponse(data.currentTaggingResults.size)
+        replyTo ! PersistEntriesResponse(data.currentHandlingResults.size)
 
-        apply(data.copy(currentTaggingResults = Vector.empty))
+        apply(data.copy(currentHandlingResults = Vector.empty))
 
       case GracefulShutdown =>
         data.graphQL.close()
         logger.info("Tagger shutdown complete!")
         Behaviors.stopped
     }
+
+  private def updateEntryMutatione(
+      entry: EntryView,
+      languageId: Option[String],
+      tagIds: Set[String]
+  ): EntriesUpdateInput = EntriesUpdateInput(
+    entry.id,
+    Some(
+      EntryUpdateInput(
+        hasBeenTagged = Some(true),
+        language = languageId.flatMap(
+          languageId =>
+            Some(
+              LanguageRelateToOneInput(
+                connect = Some(
+                  LanguageWhereUniqueInput(
+                    Some(languageId)
+                  )
+                )
+              )
+            )
+        ),
+        tags = Some(
+          TagRelateToManyInput(
+            connect = Some(
+              tagIds
+                .map(
+                  tagId =>
+                    Some(
+                      TagWhereUniqueInput(
+                        Some(tagId)
+                      )
+                    )
+                )
+                .toList
+            )
+          )
+        )
+      )
+    )
+  )
 
 }

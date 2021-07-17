@@ -6,12 +6,16 @@
 package info.coverified.graphql
 
 import com.typesafe.scalalogging.LazyLogging
+import info.coverified.graphql.schema.CoVerifiedClientSchema.Language.LanguageView
 import info.coverified.graphql.schema.CoVerifiedClientSchema.{
   EntriesUpdateInput,
   Entry,
   EntryUpdateInput,
   EntryWhereInput,
   Language,
+  LanguageCreateInput,
+  LanguageWhereInput,
+  LanguagesCreateInput,
   Mutation,
   Query,
   Source,
@@ -46,13 +50,15 @@ object GraphQLConnector {
     Language.LanguageView
   ], _QueryMeta._QueryMetaView, Language.LanguageView]
 
-  type EntryIdWithTagIds = (String, Set[String])
-
   sealed trait SupervisorGraphQLConnector extends GraphQLConnector {
 
     def queryAllExistingTags: Set[TagView]
 
+    def queryAllExistingLanguages: Set[LanguageView]
+
     def mutateTags(tags: Set[String]): Set[TagView]
+
+    def mutateLanguages(languages: Set[String]): Set[Language.LanguageView]
 
     def close(): Unit
   }
@@ -93,6 +99,58 @@ object GraphQLConnector {
               .toList
           })
         )(Tag.view(Language.view))
+
+    private val existingLanguagesQuery =
+      Query.allLanguages(LanguageWhereInput(), skip = 0)(Language.view)
+    private val createLanguagesMutation = (languages: Set[String]) =>
+      Mutation.createLanguages(
+        Some({
+          languages
+            .map(
+              name =>
+                Some(
+                  LanguagesCreateInput(
+                    Some(
+                      LanguageCreateInput(
+                        name = Some(name)
+                      )
+                    )
+                  )
+                )
+            )
+            .toList
+        })
+      )(Language.view)
+
+    override def queryAllExistingLanguages: Set[LanguageView] =
+      runtime.unsafeRun(
+        existingLanguagesQuery
+          .toRequest(apiUrl)
+          .header("x-coverified-internal-auth", authSecret)
+          .header("x-coverified-internal-auth", authSecret)
+          .send(backend)
+          .foldM(
+            ex => {
+              logger.error("Cannot query existing languages! Exception:", ex)
+              Sentry.captureException(ex)
+              ZIO.succeed(Set.empty[Language.LanguageView])
+            },
+            suc =>
+              ZIO.succeed(
+                suc.body match {
+                  case Left(error) =>
+                    Sentry.captureException(error)
+                    logger.error(
+                      "Error returned from API during tag mutation execution! Exception:",
+                      error
+                    )
+                    Set.empty
+                  case Right(allLanguages) =>
+                    allLanguages.map(_.toSet).getOrElse(Set.empty)
+                }
+              )
+          )
+      )
 
     override def queryAllExistingTags: Set[Tag.TagView[Language.LanguageView]] =
       runtime
@@ -146,6 +204,39 @@ object GraphQLConnector {
       client.close()
       backend.close()
     }
+
+    override def mutateLanguages(
+        languages: Set[String]
+    ): Set[Language.LanguageView] = runtime.unsafeRun(
+      createLanguagesMutation(languages)
+        .toRequest(apiUrl)
+        .header("x-coverified-internal-auth", authSecret)
+        .send(backend)
+        .foldM(
+          ex => {
+            logger.error(
+              "Cannot send language mutation request to API! Exception:",
+              ex
+            )
+            Sentry.captureException(ex)
+            ZIO.succeed(Set.empty[Language.LanguageView])
+          },
+          suc =>
+            ZIO.succeed(
+              suc.body match {
+                case Left(err) =>
+                  Sentry.captureException(err)
+                  logger.error(
+                    "Error returned from API during language mutation execution! Exception:",
+                    err
+                  )
+                  Set.empty
+                case Right(mutateLanguages) =>
+                  mutateLanguages.map(_.flatten.toSet).getOrElse(Set.empty)
+              }
+            )
+        )
+    )
   }
 
   final case class DummySupervisorGraphQLConnector()
@@ -164,7 +255,7 @@ object GraphQLConnector {
         tags: Set[String]
     ): Set[Tag.TagView[Language.LanguageView]] = {
 
-      logger.info("mutate existing tags in dummy connector!")
+      logger.info("mutate tags in dummy connector!")
 
       Set.empty
     }
@@ -172,19 +263,28 @@ object GraphQLConnector {
     override val authSecret: String = "NO_AUTH_REQUIRED"
 
     override def close(): Unit = {}
+
+    override def queryAllExistingLanguages: Set[LanguageView] = {
+      logger.info("Querying existing languages in dummy connector!")
+
+      Set.empty
+    }
+
+    override def mutateLanguages(
+        languages: Set[String]
+    ): Set[Language.LanguageView] = {
+      logger.info("mutate languages in dummy connector!")
+
+      Set.empty
+    }
   }
 
   sealed trait TaggerGraphQLConnector extends GraphQLConnector {
 
     def queryEntries(skip: Int, first: Int): Set[EntryView]
 
-    def updateEntryWithTags(
-        entryUuid: String,
-        tagUuids: Set[String]
-    ): Option[EntryView]
-
     def updateEntriesWithTags(
-        entryUuids: Vector[EntryIdWithTagIds]
+        entryUuids: Seq[EntriesUpdateInput]
     ): Option[Vector[EntryView]]
 
     def close(): Unit
@@ -226,65 +326,10 @@ object GraphQLConnector {
         )(fullEntryViewInnerSelection)
 
     private val updateEntriesWithTagsMutation =
-      (entries: Vector[EntryIdWithTagIds]) =>
+      (entries: Seq[EntriesUpdateInput]) =>
         Mutation.updateEntries(
           Some(
-            entries.map {
-              case (entryId, tagIds) =>
-                Some(
-                  EntriesUpdateInput(
-                    entryId,
-                    Some(
-                      EntryUpdateInput(
-                        hasBeenTagged = Some(true),
-                        tags = Some(
-                          TagRelateToManyInput(
-                            connect = Some(
-                              tagIds
-                                .map(
-                                  tagid =>
-                                    Some(
-                                      TagWhereUniqueInput(
-                                        Some(tagid)
-                                      )
-                                    )
-                                )
-                                .toList
-                            )
-                          )
-                        )
-                      )
-                    )
-                  )
-                )
-            }.toList
-          )
-        )(fullEntryViewInnerSelection)
-
-    private val updateEntryWithTagsMutation =
-      (entryId: String, tagIds: Set[String]) =>
-        Mutation.updateEntry(
-          entryId,
-          Some(
-            EntryUpdateInput(
-              hasBeenTagged = Some(true),
-              tags = Some(
-                TagRelateToManyInput(
-                  connect = Some(
-                    tagIds
-                      .map(
-                        tagid =>
-                          Some(
-                            TagWhereUniqueInput(
-                              Some(tagid)
-                            )
-                          )
-                      )
-                      .toList
-                  )
-                )
-              )
-            )
+            entries.map(Some(_)).toList
           )
         )(fullEntryViewInnerSelection)
 
@@ -323,43 +368,6 @@ object GraphQLConnector {
       )
     }
 
-    override def updateEntryWithTags(
-        entryUuid: String,
-        tagUuids: Set[String]
-    ): Option[EntryView] = {
-
-      runtime.unsafeRun(
-        updateEntryWithTagsMutation(entryUuid, tagUuids)
-          .toRequest(apiUrl)
-          .header("x-coverified-internal-auth", authSecret)
-          .send(backend)
-          .foldM(
-            ex => {
-              logger.error(
-                "Cannot send entry tag update request to API! Exception:",
-                ex
-              )
-              Sentry.captureException(ex)
-              ZIO.succeed(None)
-            },
-            suc =>
-              ZIO.succeed(
-                suc.body match {
-                  case Left(err) =>
-                    Sentry.captureException(err)
-                    logger.error(
-                      "Error returned from API during entry update with tags mutation execution! Exception:",
-                      err
-                    )
-                    None
-                  case Right(mutatedEntry) =>
-                    mutatedEntry
-                }
-              )
-          )
-      )
-    }
-
     override def close(): Unit = {
       logger.info("Trying to close graphQL connection client ...")
       client.close()
@@ -368,7 +376,7 @@ object GraphQLConnector {
     }
 
     override def updateEntriesWithTags(
-        entryUuids: Vector[(String, Set[String])]
+        entryUuids: Seq[EntriesUpdateInput]
     ): Option[Vector[EntryView]] = {
       runtime.unsafeRun(
         updateEntriesWithTagsMutation(entryUuids)
@@ -428,7 +436,7 @@ object GraphQLConnector {
     override def close(): Unit = {}
 
     override def updateEntriesWithTags(
-        entryUuids: Vector[(String, Set[String])]
+        entryUuids: Seq[EntriesUpdateInput]
     ): Option[Vector[EntryView]] =
       throw new RuntimeException(
         s"Update entries is not implemented in ${getClass.getSimpleName}!"

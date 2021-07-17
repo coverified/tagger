@@ -47,7 +47,7 @@ repositories {
 dependencies {
 
 	// coverified dependencies
-	implementation 'com.github.coverified:graphQLConnector:0b3824a'
+	implementation 'com.github.coverified:graphQLConnector:aebc17cd'
 
 	// sentry logging
 	implementation 'io.sentry:sentry-log4j2:5.0.1'
@@ -82,6 +82,9 @@ dependencies {
 
 	// https://mvnrepository.com/artifact/com.github.ghostdogpr/caliban-tools
 	implementation group: 'com.github.ghostdogpr', name: "caliban-tools_${scalaVersion}", version: '0.9.5'
+
+	// language detection
+	implementation 'com.github.pemistahl:lingua:1.1.0'
 
 	// logging
 	implementation "org.slf4j:slf4j-api:${slf4jVersion}"  // slf4j wrapper
