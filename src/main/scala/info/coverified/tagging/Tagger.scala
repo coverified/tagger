@@ -77,7 +77,6 @@ object Tagger extends LazyLogging {
           data.graphQL.queryEntries(skip, data.batchSize).toVector
 
         // request tags from ai
-        // ignores entities no tags can be found for!
         val handlingResult: Vector[HandlingResult] =
           entities.map(
             entry => {
