@@ -281,7 +281,11 @@ object GraphQLConnector {
 
   sealed trait TaggerGraphQLConnector extends GraphQLConnector {
 
-    def queryEntries(skip: Int, first: Int): Set[EntryView]
+    def queryEntries(
+        skip: Int,
+        first: Int,
+        filter: EntryWhereInput
+    ): Set[EntryView]
 
     def updateEntriesWithTags(
         entryUuids: Seq[EntriesUpdateInput]
@@ -333,11 +337,11 @@ object GraphQLConnector {
           )
         )(fullEntryViewInnerSelection)
 
-    override def queryEntries(skip: Int, first: Int): Set[EntryView] = {
-      // filter for untagged entries
-      val filter = EntryWhereInput(
-        hasBeenTagged = Some(false)
-      )
+    override def queryEntries(
+        skip: Int,
+        first: Int,
+        filter: EntryWhereInput
+    ): Set[EntryView] = {
       runtime.unsafeRun(
         entriesQuery(skip, first, filter)
           .toRequest(apiUrl)
@@ -416,7 +420,11 @@ object GraphQLConnector {
       with LazyLogging {
 
     // todo JH remove
-    def queryEntries(skip: Int, first: Int): Set[EntryView] =
+    def queryEntries(
+        skip: Int,
+        first: Int,
+        filter: EntryWhereInput
+    ): Set[EntryView] =
       throw new RuntimeException(
         s"Query Entries is not implemented in ${getClass.getSimpleName}!"
       )

@@ -21,6 +21,7 @@ import info.coverified.graphql.GraphQLConnector.{
 import info.coverified.graphql.schema.CoVerifiedClientSchema.{
   EntriesUpdateInput,
   EntryUpdateInput,
+  EntryWhereInput,
   LanguageRelateToOneInput,
   LanguageWhereUniqueInput,
   TagRelateToManyInput,
@@ -73,8 +74,20 @@ object Tagger extends LazyLogging {
     Behaviors.receiveMessage {
       case HandleEntries(skip, replyTo) =>
         // query entities from db
+        logger.info(
+          "Query untagged {} entries. Skipping first {} entries.",
+          data.batchSize,
+          skip
+        )
         val entities: Vector[EntryView] =
-          data.graphQL.queryEntries(skip, data.batchSize).toVector
+          data.graphQL
+            .queryEntries(
+              skip,
+              data.batchSize,
+              EntryWhereInput(hasBeenTagged = Some(false))
+            )
+            .toVector
+        logger.info(s"Found ${entities.size} untagged entries!")
 
         // request tags from ai
         val handlingResult: Vector[HandlingResult] =
@@ -114,20 +127,19 @@ object Tagger extends LazyLogging {
           .toMap
 
         val startPersisting = System.currentTimeMillis()
-
         val entryUpdates = data.currentHandlingResults.map(handlingResult => {
           updateEntryMutatione(
             handlingResult.entry,
             handlingResult.language.flatMap(languageMap.get),
             handlingResult.tags.flatMap(tagMap.get)
           )
-
         })
+        logger.info("Going to update {} entries!", entryUpdates.size)
 
         data.graphQL.updateEntriesWithTags(entryUpdates)
 
         val persistingDuration = System.currentTimeMillis() - startPersisting
-        logger.info(s"Persisting duration: $persistingDuration ms")
+        logger.info(s"Update duration: $persistingDuration ms")
 
         replyTo ! PersistEntriesResponse(data.currentHandlingResults.size)
 

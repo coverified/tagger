@@ -202,11 +202,11 @@ object Supervisor extends LazyLogging {
         Behaviors.same
       case entryMeta: EntryMeta =>
         // all replies received; mutate tags + languages + let worker persist entities
+        logger.info("All answers from worker received!")
         val newTags =
           entryMeta.tags.filterNot(data.existingTags.flatMap(_.name))
         val newLanguages =
           entryMeta.languages.filterNot(data.existingLanguages.flatMap(_.name))
-
         val updatedData =
           handleNewLanguages(handleNewTags(data, newTags), newLanguages)
 
