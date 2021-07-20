@@ -90,7 +90,8 @@ object GraphQLConnector {
                     TagsCreateInput(
                       Some(
                         TagCreateInput(
-                          name = Some(name)
+                          name = Some(name),
+                          generated = Some(true)
                         )
                       )
                     )
