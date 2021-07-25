@@ -6,11 +6,17 @@
 package info.coverified.graphql
 
 import com.typesafe.scalalogging.LazyLogging
+import info.coverified.graphql.schema.CoVerifiedClientSchema.Entry.EntryView
 import info.coverified.graphql.schema.CoVerifiedClientSchema.Language.LanguageView
 import info.coverified.graphql.schema.CoVerifiedClientSchema.{
+  AITag,
+  AITagCreateInput,
+  AITagWhereInput,
+  AITagsCreateInput,
+  ArticleTag,
+  ArticleTagWhereInput,
   EntriesUpdateInput,
   Entry,
-  EntryUpdateInput,
   EntryWhereInput,
   Language,
   LanguageCreateInput,
@@ -20,11 +26,7 @@ import info.coverified.graphql.schema.CoVerifiedClientSchema.{
   Query,
   Source,
   Tag,
-  TagCreateInput,
-  TagRelateToManyInput,
   TagWhereInput,
-  TagWhereUniqueInput,
-  TagsCreateInput,
   Url,
   _QueryMeta
 }
@@ -44,19 +46,18 @@ trait GraphQLConnector {
 
 object GraphQLConnector {
 
-  type TagView = Tag.TagView[Language.LanguageView]
+  type AITagView = AITag.AITagView
 
-  type EntryView = Entry.EntryView[Url.UrlView[Source.SourceView], Tag.TagView[
-    Language.LanguageView
-  ], _QueryMeta._QueryMetaView, Language.LanguageView]
+  type EntryView =
+    Entry.EntryView[Url.UrlView[Source.SourceView], Tag.TagView, _QueryMeta._QueryMetaView, ArticleTag.ArticleTagView, _QueryMeta._QueryMetaView, AITag.AITagView, _QueryMeta._QueryMetaView, Language.LanguageView]
 
   sealed trait SupervisorGraphQLConnector extends GraphQLConnector {
 
-    def queryAllExistingTags: Set[TagView]
+    def queryAllExistingTags: Set[AITagView]
 
     def queryAllExistingLanguages: Set[LanguageView]
 
-    def mutateTags(tags: Set[String]): Set[TagView]
+    def mutateTags(tags: Set[String]): Set[AITagView]
 
     def mutateLanguages(languages: Set[String]): Set[Language.LanguageView]
 
@@ -78,20 +79,19 @@ object GraphQLConnector {
       )
 
     private val existingTagsQuery =
-      Query.allTags(TagWhereInput(), skip = 0)(Tag.view(Language.view))
+      Query.allAITags(AITagWhereInput(), skip = 0)(AITag.view)
     private val createTagsMutation =
       (tags: Set[String]) => // todo language of tags
-        Mutation.createTags(
+        Mutation.createAITags(
           Some({
             tags
               .map(
                 name =>
                   Some(
-                    TagsCreateInput(
+                    AITagsCreateInput(
                       Some(
-                        TagCreateInput(
-                          name = Some(name),
-                          generated = Some(true)
+                        AITagCreateInput(
+                          name = Some(name)
                         )
                       )
                     )
@@ -99,7 +99,7 @@ object GraphQLConnector {
               )
               .toList
           })
-        )(Tag.view(Language.view))
+        )(AITag.view)
 
     private val existingLanguagesQuery =
       Query.allLanguages(LanguageWhereInput(), skip = 0)(Language.view)
@@ -142,7 +142,7 @@ object GraphQLConnector {
                   case Left(error) =>
                     Sentry.captureException(error)
                     logger.error(
-                      "Error returned from API during tag mutation execution! Exception:",
+                      "Error returned from API during aiTag mutation execution! Exception:",
                       error
                     )
                     Set.empty
@@ -153,7 +153,7 @@ object GraphQLConnector {
           )
       )
 
-    override def queryAllExistingTags: Set[Tag.TagView[Language.LanguageView]] =
+    override def queryAllExistingTags: Set[AITag.AITagView] =
       runtime
         .unsafeRun(
           existingTagsQuery
@@ -169,7 +169,7 @@ object GraphQLConnector {
 
     override def mutateTags(
         tags: Set[String]
-    ): Set[Tag.TagView[Language.LanguageView]] =
+    ): Set[AITag.AITagView] =
       runtime.unsafeRun(
         createTagsMutation(tags)
           .toRequest(apiUrl)
@@ -178,11 +178,11 @@ object GraphQLConnector {
           .foldM(
             ex => {
               logger.error(
-                "Cannot send tag mutation request to API! Exception:",
+                "Cannot send aiTag mutation request to API! Exception:",
                 ex
               )
               Sentry.captureException(ex)
-              ZIO.succeed(Set.empty[Tag.TagView[Language.LanguageView]])
+              ZIO.succeed(Set.empty[AITag.AITagView])
             },
             suc =>
               ZIO.succeed(
@@ -190,7 +190,7 @@ object GraphQLConnector {
                   case Left(err) =>
                     Sentry.captureException(err)
                     logger.error(
-                      "Error returned from API during tag mutation execution! Exception:",
+                      "Error returned from API during aiTag mutation execution! Exception:",
                       err
                     )
                     Set.empty
@@ -244,8 +244,7 @@ object GraphQLConnector {
       extends SupervisorGraphQLConnector
       with LazyLogging {
 
-    override def queryAllExistingTags
-        : Set[Tag.TagView[Language.LanguageView]] = {
+    override def queryAllExistingTags: Set[AITag.AITagView] = {
 
       logger.info("Querying existing tags in dummy connector!")
 
@@ -254,7 +253,7 @@ object GraphQLConnector {
 
     override def mutateTags(
         tags: Set[String]
-    ): Set[Tag.TagView[Language.LanguageView]] = {
+    ): Set[AITag.AITagView] = {
 
       logger.info("mutate tags in dummy connector!")
 
@@ -310,14 +309,28 @@ object GraphQLConnector {
       )
 
     private val fullEntryViewInnerSelection = Entry.view(
+      aiTagsWhere = AITagWhereInput(),
+      aiTagsSkip = 0,
+      _aiTagsMetaWhere = AITagWhereInput(),
+      _aiTagsMetaSkip = 0,
+      aiTagsCountWhere = AITagWhereInput(),
       tagsWhere = TagWhereInput(),
       tagsSkip = 0,
       _tagsMetaWhere = TagWhereInput(),
       _tagsMetaSkip = 0,
-      tagsCountWhere = TagWhereInput()
+      tagsCountWhere = TagWhereInput(),
+      articleTagsWhere = ArticleTagWhereInput(),
+      articleTagsSkip = 0,
+      _articleTagsMetaWhere = ArticleTagWhereInput(),
+      _articleTagsMetaSkip = 0,
+      articleTagsCountWhere = ArticleTagWhereInput()
     )(
       Url.view(Source.view),
-      Tag.view(Language.view),
+      Tag.view,
+      _QueryMeta.view,
+      ArticleTag.view,
+      _QueryMeta.view,
+      AITag.view,
       _QueryMeta.view,
       Language.view
     )
@@ -391,7 +404,7 @@ object GraphQLConnector {
           .foldM(
             ex => {
               logger.error(
-                "Cannot send entry tag update request to API! Exception:",
+                "Cannot send entry aiTag update request to API! Exception:",
                 ex
               )
               Sentry.captureException(ex)

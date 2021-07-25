@@ -47,7 +47,7 @@ repositories {
 dependencies {
 
 	// coverified dependencies
-	implementation 'com.github.coverified:graphQLConnector:b46036c940'
+	implementation 'com.github.coverified:graphQLConnector:b9e2889dad'
 
 	// sentry logging
 	implementation 'io.sentry:sentry-log4j2:5.0.1'

@@ -11,7 +11,7 @@ import akka.util.Timeout
 import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.GraphQLConnector.{
   SupervisorGraphQLConnector,
-  TagView,
+  AITagView,
   ZIOTaggerGraphQLConnector
 }
 import info.coverified.tagging.Tagger.{
@@ -65,7 +65,7 @@ object Supervisor extends LazyLogging {
       cfg: Config, // todo cfg replace with interfaces for easier testing
       graphQL: SupervisorGraphQLConnector,
       workerPool: ActorRef[TaggerEvent],
-      existingTags: Set[TagView],
+      existingTags: Set[AITagView],
       existingLanguages: Set[LanguageView],
       taggingStartDate: Long = System.currentTimeMillis(),
       globalStartDate: Long = System.currentTimeMillis(),
@@ -357,7 +357,7 @@ object Supervisor extends LazyLogging {
   }
 
   private def persistEntries(
-      allTags: Set[TagView],
+      allTags: Set[AITagView],
       allLanguages: Set[LanguageView],
       workerPool: ActorRef[TaggerEvent],
       noOfWorkers: Int
@@ -419,7 +419,7 @@ object Supervisor extends LazyLogging {
   ): TaggerSupervisorData =
     if (newTags.nonEmpty) {
       logger.info(s"Mutating ${newTags.size} new tags ...")
-      val newTagViews: Set[TagView] = data.graphQL.mutateTags(newTags)
+      val newTagViews: Set[AITagView] = data.graphQL.mutateTags(newTags)
       val allTags = newTagViews ++ data.existingTags
       logger.info(s"Mutation done. Overall tag no: ${allTags.size}")
       data.copy(existingTags = allTags)

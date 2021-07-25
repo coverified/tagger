@@ -15,7 +15,7 @@ import com.github.pemistahl.lingua.api.{
 import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.GraphQLConnector.{
   EntryView,
-  TagView,
+  AITagView,
   TaggerGraphQLConnector
 }
 import info.coverified.graphql.schema.CoVerifiedClientSchema.{
@@ -45,7 +45,7 @@ object Tagger extends LazyLogging {
   )
 
   final case class PersistEntries(
-      tags: Set[TagView],
+      tags: Set[AITagView],
       languages: Set[LanguageView],
       replyTo: ActorRef[PersistEntriesResponse]
   ) extends TaggerEvent
