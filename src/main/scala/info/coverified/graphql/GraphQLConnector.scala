@@ -53,11 +53,11 @@ object GraphQLConnector {
 
   sealed trait SupervisorGraphQLConnector extends GraphQLConnector {
 
-    def queryAllExistingTags: Set[AITagView]
+    def queryAllExistingAiTags: Set[AITagView]
 
     def queryAllExistingLanguages: Set[LanguageView]
 
-    def mutateTags(tags: Set[String]): Set[AITagView]
+    def mutateAiTags(tags: Set[String]): Set[AITagView]
 
     def mutateLanguages(languages: Set[String]): Set[Language.LanguageView]
 
@@ -153,7 +153,7 @@ object GraphQLConnector {
           )
       )
 
-    override def queryAllExistingTags: Set[AITag.AITagView] =
+    override def queryAllExistingAiTags: Set[AITag.AITagView] =
       runtime
         .unsafeRun(
           existingTagsQuery
@@ -167,7 +167,7 @@ object GraphQLConnector {
         .getOrElse(Set.empty)
         .toSet
 
-    override def mutateTags(
+    override def mutateAiTags(
         tags: Set[String]
     ): Set[AITag.AITagView] =
       runtime.unsafeRun(
@@ -244,14 +244,14 @@ object GraphQLConnector {
       extends SupervisorGraphQLConnector
       with LazyLogging {
 
-    override def queryAllExistingTags: Set[AITag.AITagView] = {
+    override def queryAllExistingAiTags: Set[AITag.AITagView] = {
 
       logger.info("Querying existing tags in dummy connector!")
 
       Set.empty
     }
 
-    override def mutateTags(
+    override def mutateAiTags(
         tags: Set[String]
     ): Set[AITag.AITagView] = {
 
@@ -287,7 +287,7 @@ object GraphQLConnector {
         filter: EntryWhereInput
     ): Set[EntryView]
 
-    def updateEntriesWithTags(
+    def updateEntriesWithAiTags(
         entryUuids: Seq[EntriesUpdateInput]
     ): Option[Vector[EntryView]]
 
@@ -393,7 +393,7 @@ object GraphQLConnector {
       backend.close()
     }
 
-    override def updateEntriesWithTags(
+    override def updateEntriesWithAiTags(
         entryUuids: Seq[EntriesUpdateInput]
     ): Option[Vector[EntryView]] = {
       runtime.unsafeRun(
@@ -457,7 +457,7 @@ object GraphQLConnector {
 
     override def close(): Unit = {}
 
-    override def updateEntriesWithTags(
+    override def updateEntriesWithAiTags(
         entryUuids: Seq[EntriesUpdateInput]
     ): Option[Vector[EntryView]] =
       throw new RuntimeException(

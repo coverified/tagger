@@ -93,7 +93,7 @@ object Tagger extends LazyLogging {
         val handlingResult: Vector[HandlingResult] =
           entities.map(
             entry => {
-              val tags = data.ai.queryTags(entry).getOrElse(Set.empty)
+              val tags = data.ai.queryAiTags(entry).getOrElse(Set.empty)
               val language =
                 entry.content.flatMap(data.detector.detectLanguageOf(_) match {
                   case Language.UNKNOWN =>
@@ -136,7 +136,7 @@ object Tagger extends LazyLogging {
         })
         logger.info("Going to update {} entries!", entryUpdates.size)
 
-        data.graphQL.updateEntriesWithTags(entryUpdates)
+        data.graphQL.updateEntriesWithAiTags(entryUpdates)
 
         val persistingDuration = System.currentTimeMillis() - startPersisting
         logger.info(s"Update duration: $persistingDuration ms")

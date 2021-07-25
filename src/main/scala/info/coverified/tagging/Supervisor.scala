@@ -9,17 +9,8 @@ import akka.actor.typed.{ActorRef, ActorSystem, Behavior}
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, Routers, StashBuffer}
 import akka.util.Timeout
 import com.typesafe.scalalogging.LazyLogging
-import info.coverified.graphql.GraphQLConnector.{
-  SupervisorGraphQLConnector,
-  AITagView,
-  ZIOTaggerGraphQLConnector
-}
-import info.coverified.tagging.Tagger.{
-  GracefulShutdown,
-  HandleEntriesResponse,
-  TaggerData,
-  TaggerEvent
-}
+import info.coverified.graphql.GraphQLConnector.{AITagView, SupervisorGraphQLConnector, ZIOTaggerGraphQLConnector}
+import info.coverified.tagging.Tagger.{GracefulShutdown, HandleEntriesResponse, TaggerData, TaggerEvent}
 import info.coverified.tagging.ai.AiConnector.TaggerAiConnector
 import info.coverified.tagging.main.Config
 import akka.actor.typed.scaladsl.AskPattern._
@@ -126,7 +117,7 @@ object Supervisor extends LazyLogging {
 
           // query existing tags
           logger.info("Querying existing tags ...")
-          val existingTags = graphQLConnector.queryAllExistingTags
+          val existingTags = graphQLConnector.queryAllExistingAiTags
           logger.info(s"Found ${existingTags.size} tags in database.")
 
           // query existing languages
@@ -419,7 +410,7 @@ object Supervisor extends LazyLogging {
   ): TaggerSupervisorData =
     if (newTags.nonEmpty) {
       logger.info(s"Mutating ${newTags.size} new tags ...")
-      val newTagViews: Set[AITagView] = data.graphQL.mutateTags(newTags)
+      val newTagViews: Set[AITagView] = data.graphQL.mutateAiTags(newTags)
       val allTags = newTagViews ++ data.existingTags
       logger.info(s"Mutation done. Overall tag no: ${allTags.size}")
       data.copy(existingTags = allTags)

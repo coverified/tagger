@@ -18,7 +18,7 @@ import scala.util.{Failure, Success}
 import scala.util.{Random, Try}
 
 trait AiConnector {
-  def queryTags(entry: EntryView): Option[Set[String]]
+  def queryAiTags(entry: EntryView): Option[Set[String]]
 }
 
 object AiConnector {
@@ -31,7 +31,7 @@ object AiConnector {
       extends AiConnector
       with LazyLogging {
 
-    override def queryTags(entry: EntryView): Option[Set[String]] =
+    override def queryAiTags(entry: EntryView): Option[Set[String]] =
       entry.content.flatMap(
         entryContent =>
           Try {
@@ -135,7 +135,7 @@ object AiConnector {
       "Wissenschaft und Technik"
     )
 
-    override def queryTags(dummyEntry: EntryView): Option[Set[String]] = {
+    override def queryAiTags(dummyEntry: EntryView): Option[Set[String]] = {
 
       val dummyTags: Set[String] =
         (0 until random.nextInt(dummyData.size)).map(dummyData(_)).toSet
