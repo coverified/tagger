@@ -9,8 +9,17 @@ import akka.actor.typed.{ActorRef, ActorSystem, Behavior}
 import akka.actor.typed.scaladsl.{ActorContext, Behaviors, Routers, StashBuffer}
 import akka.util.Timeout
 import com.typesafe.scalalogging.LazyLogging
-import info.coverified.graphql.GraphQLConnector.{AITagView, SupervisorGraphQLConnector, ZIOTaggerGraphQLConnector}
-import info.coverified.tagging.Tagger.{GracefulShutdown, HandleEntriesResponse, TaggerData, TaggerEvent}
+import info.coverified.graphql.GraphQLConnector.{
+  AITagView,
+  SupervisorGraphQLConnector,
+  ZIOTaggerGraphQLConnector
+}
+import info.coverified.tagging.Tagger.{
+  GracefulShutdown,
+  HandleEntriesResponse,
+  TaggerData,
+  TaggerEvent
+}
 import info.coverified.tagging.ai.AiConnector.TaggerAiConnector
 import info.coverified.tagging.main.Config
 import akka.actor.typed.scaladsl.AskPattern._
@@ -36,7 +45,7 @@ object Supervisor extends LazyLogging {
   private type Tag = String
   private type Language = String
 
-  private final case class EntryMeta(tags: Set[Tag], languages: Set[Language])
+  private final case class EntryMeta(aiTags: Set[Tag], languages: Set[Language])
       extends TaggerSupervisorEvent
 
   private final case class TaggingFailed(exception: Throwable)
@@ -56,7 +65,7 @@ object Supervisor extends LazyLogging {
       cfg: Config, // todo cfg replace with interfaces for easier testing
       graphQL: SupervisorGraphQLConnector,
       workerPool: ActorRef[TaggerEvent],
-      existingTags: Set[AITagView],
+      existingAiTags: Set[AITagView],
       existingLanguages: Set[LanguageView],
       taggingStartDate: Long = System.currentTimeMillis(),
       globalStartDate: Long = System.currentTimeMillis(),
@@ -115,10 +124,10 @@ object Supervisor extends LazyLogging {
           )
           ctx.watch(workerPool)
 
-          // query existing tags
-          logger.info("Querying existing tags ...")
-          val existingTags = graphQLConnector.queryAllExistingAiTags
-          logger.info(s"Found ${existingTags.size} tags in database.")
+          // query existing aitags
+          logger.info("Querying existing aiTags ...")
+          val existingAiTags = graphQLConnector.queryAllExistingAiTags
+          logger.info(s"Found ${existingAiTags.size} AiTags in database.")
 
           // query existing languages
           logger.info("Querying existing languages ...")
@@ -132,7 +141,7 @@ object Supervisor extends LazyLogging {
                 cfg,
                 graphQLConnector,
                 workerPool,
-                existingTags,
+                existingAiTags,
                 existingLanguages
               ),
               msgBuffer
@@ -192,17 +201,17 @@ object Supervisor extends LazyLogging {
         msgBuffer.stash(StartTagging)
         Behaviors.same
       case entryMeta: EntryMeta =>
-        // all replies received; mutate tags + languages + let worker persist entities
+        // all replies received; mutate aiTags + languages + let worker persist entities
         logger.info("All answers from worker received!")
-        val newTags =
-          entryMeta.tags.filterNot(data.existingTags.flatMap(_.name))
+        val newAiTags =
+          entryMeta.aiTags.filterNot(data.existingAiTags.flatMap(_.name))
         val newLanguages =
           entryMeta.languages.filterNot(data.existingLanguages.flatMap(_.name))
         val updatedData =
-          handleNewLanguages(handleNewTags(data, newTags), newLanguages)
+          handleNewLanguages(handleNewAiTags(data, newAiTags), newLanguages)
 
         persistEntries(
-          updatedData.existingTags,
+          updatedData.existingAiTags,
           updatedData.existingLanguages,
           updatedData.workerPool,
           updatedData.cfg.noOfConcurrentWorker
@@ -211,7 +220,7 @@ object Supervisor extends LazyLogging {
 
       case TaggingFailed(exception) =>
         // TagEntries(...) cmd failed
-        logger.error("Tagging failed with exception: ", exception)
+        logger.error("AiTagging failed with exception: ", exception)
         Sentry.captureException(exception)
         if (data.retries < MAX_RETRY_NO) {
           logger.info(s"Retrying ... (current retry no: ${data.retries})")
@@ -292,7 +301,7 @@ object Supervisor extends LazyLogging {
           logger.info(s"Retrying ... (current retry no: ${data.retries})")
 
           persistEntries(
-            data.existingTags,
+            data.existingAiTags,
             data.existingLanguages,
             data.workerPool,
             data.cfg.noOfConcurrentWorker
@@ -340,7 +349,7 @@ object Supervisor extends LazyLogging {
         TaggingFailed(exception)
       case Success(handlingResponses) =>
         EntryMeta(
-          handlingResponses.flatMap(_.tags).toSet,
+          handlingResponses.flatMap(_.aiTags).toSet,
           handlingResponses.flatMap(_.languages).toSet
         )
     }
@@ -404,16 +413,16 @@ object Supervisor extends LazyLogging {
     )
   }
 
-  private def handleNewTags(
+  private def handleNewAiTags(
       data: TaggerSupervisorData,
       newTags: Set[Tag]
   ): TaggerSupervisorData =
     if (newTags.nonEmpty) {
       logger.info(s"Mutating ${newTags.size} new tags ...")
       val newTagViews: Set[AITagView] = data.graphQL.mutateAiTags(newTags)
-      val allTags = newTagViews ++ data.existingTags
+      val allTags = newTagViews ++ data.existingAiTags
       logger.info(s"Mutation done. Overall tag no: ${allTags.size}")
-      data.copy(existingTags = allTags)
+      data.copy(existingAiTags = allTags)
     } else data
 
   private def handleNewLanguages(

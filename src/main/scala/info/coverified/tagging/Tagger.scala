@@ -14,11 +14,13 @@ import com.github.pemistahl.lingua.api.{
 }
 import com.typesafe.scalalogging.LazyLogging
 import info.coverified.graphql.GraphQLConnector.{
-  EntryView,
   AITagView,
+  EntryView,
   TaggerGraphQLConnector
 }
 import info.coverified.graphql.schema.CoVerifiedClientSchema.{
+  AITagRelateToManyInput,
+  AITagWhereUniqueInput,
   EntriesUpdateInput,
   EntryUpdateInput,
   EntryWhereInput,
@@ -40,12 +42,12 @@ object Tagger extends LazyLogging {
   ) extends TaggerEvent
 
   final case class HandleEntriesResponse(
-      tags: Set[String],
+      aiTags: Set[String],
       languages: Set[String]
   )
 
   final case class PersistEntries(
-      tags: Set[AITagView],
+      aiTags: Set[AITagView],
       languages: Set[LanguageView],
       replyTo: ActorRef[PersistEntriesResponse]
   ) extends TaggerEvent
@@ -56,7 +58,7 @@ object Tagger extends LazyLogging {
 
   final case class HandlingResult(
       entry: EntryView,
-      tags: Set[String],
+      aiTags: Set[String],
       language: Option[String]
   )
 
@@ -108,15 +110,15 @@ object Tagger extends LazyLogging {
         val updatedData = data.copy(currentHandlingResults = handlingResult)
 
         replyTo ! HandleEntriesResponse(
-          handlingResult.flatMap(_.tags).toSet,
+          handlingResult.flatMap(_.aiTags).toSet,
           handlingResult.flatMap(_.language).toSet
         )
 
         apply(updatedData)
 
-      case PersistEntries(tags, languages, replyTo) =>
+      case PersistEntries(aiTags, languages, replyTo) =>
         // mutate entries
-        val tagMap = tags
+        val aiTagMap = aiTags
           .flatMap(tagView => tagView.name.map(name => name -> tagView.id))
           .toMap
         val languageMap = languages
@@ -128,10 +130,10 @@ object Tagger extends LazyLogging {
 
         val startPersisting = System.currentTimeMillis()
         val entryUpdates = data.currentHandlingResults.map(handlingResult => {
-          updateEntryMutatione(
+          updateEntryMutation(
             handlingResult.entry,
             handlingResult.language.flatMap(languageMap.get),
-            handlingResult.tags.flatMap(tagMap.get)
+            handlingResult.aiTags.flatMap(aiTagMap.get)
           )
         })
         logger.info("Going to update {} entries!", entryUpdates.size)
@@ -151,10 +153,10 @@ object Tagger extends LazyLogging {
         Behaviors.stopped
     }
 
-  private def updateEntryMutatione(
+  private def updateEntryMutation(
       entry: EntryView,
       languageId: Option[String],
-      tagIds: Set[String]
+      aiTagIds: Set[String]
   ): EntriesUpdateInput = EntriesUpdateInput(
     entry.id,
     Some(
@@ -172,15 +174,15 @@ object Tagger extends LazyLogging {
               )
             )
         ),
-        tags = Some(
-          TagRelateToManyInput(
+        aiTags = Some(
+          AITagRelateToManyInput(
             connect = Some(
-              tagIds
+              aiTagIds
                 .map(
-                  tagId =>
+                  aiTagId =>
                     Some(
-                      TagWhereUniqueInput(
-                        Some(tagId)
+                      AITagWhereUniqueInput(
+                        Some(aiTagId)
                       )
                     )
                 )

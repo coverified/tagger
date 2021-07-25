@@ -343,7 +343,7 @@ object GraphQLConnector {
           skip = skip
         )(fullEntryViewInnerSelection)
 
-    private val updateEntriesWithTagsMutation =
+    private val updateEntriesWithAiTagsMutation =
       (entries: Seq[EntriesUpdateInput]) =>
         Mutation.updateEntries(
           Some(
@@ -397,7 +397,7 @@ object GraphQLConnector {
         entryUuids: Seq[EntriesUpdateInput]
     ): Option[Vector[EntryView]] = {
       runtime.unsafeRun(
-        updateEntriesWithTagsMutation(entryUuids)
+        updateEntriesWithAiTagsMutation(entryUuids)
           .toRequest(apiUrl)
           .header("x-coverified-internal-auth", authSecret)
           .send(backend)
